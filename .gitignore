@@ -1,3 +1,5 @@
 data/
 workdir
 submit.sh
+*.ckpt
+*.ipynb
