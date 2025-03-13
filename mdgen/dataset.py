@@ -4,7 +4,8 @@ from .residue_constants import restype_order
 import numpy as np
 import pandas as pd
 from .geometry import atom37_to_torsions, atom14_to_atom37, atom14_to_frames
-       
+from mdgen.residue_constants import restype_order, restype_atom37_mask
+
 class MDGenDataset(torch.utils.data.Dataset):
     def __init__(self, args, split, repeat=1):
         super().__init__()

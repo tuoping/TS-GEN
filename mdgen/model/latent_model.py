@@ -197,6 +197,7 @@ class LatentMDGenModel(nn.Module):
             x_r = self.latent_to_emb_r(x_r)
             if aatype is not None and not self.args.no_aa_emb:
                 x_f = x_f + self.aatype_to_emb(aatype)
+                emb = self.aatype_to_emb(aatype)
                 x_r = x_r + self.aatype_to_emb(aatype)
             if self.args.design:
                 x_f = x_f + self.x_d_to_emb(x_d)

@@ -189,9 +189,12 @@ class NewMDGenWrapper(Wrapper):
             'dynamic_mpnn',
             'no_offsets',
             'no_frames',
+            "tps_condition",
+            "design"
         ]:
             if not hasattr(args, key):
                 setattr(args, key, False)
+
         # args.latent_dim = 7 if not self.args.tps_condition else 14
         latent_dim = 21 if not (self.args.tps_condition or self.args.inpainting or self.args.dynamic_mpnn) else 28
         if args.design:

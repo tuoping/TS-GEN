@@ -16,6 +16,7 @@ parser.add_argument('--out_dir', type=str, default=".")
 parser.add_argument('--split', type=str, default='splits/4AA_test.csv')
 parser.add_argument('--chunk_idx', type=int, default=0)
 parser.add_argument('--n_chunks', type=int, default=1)
+parser.add_argument('--stride', type=int, default=1)
 args = parser.parse_args()
 import mdgen.analysis
 import os, torch, mdtraj, tqdm
@@ -28,6 +29,8 @@ from mdgen.dataset import atom14_to_frames
 import pandas as pd
 import contextlib
 import numpy as np
+
+from mdgen.utils import atom14_to_pdb
 
 @contextlib.contextmanager
 def temp_seed(seed):
@@ -46,9 +49,10 @@ def get_sample(arr, seqres, start_idxs, end_idxs, start_state, end_state, num_fr
 
     start_arr = np.copy(arr[start_idx:start_idx + 1]).astype(np.float32)
     end_arr = np.copy(arr[end_idx:end_idx + 1]).astype(np.float32)
-    seqres = torch.tensor([restype_order[c] for c in seqres])
+    seqres = torch.tensor([restype_order[c] for c in seqres]).unsqueeze(0)
 
     start_frames = atom14_to_frames(torch.from_numpy(start_arr))
+
     start_atom37 = torch.from_numpy(atom14_to_atom37(start_arr, seqres)).float()
     start_torsions, start_torsion_mask = atom37_to_torsions(start_atom37, seqres[None])
     
@@ -71,7 +75,7 @@ def get_sample(arr, seqres, start_idxs, end_idxs, start_state, end_state, num_fr
         'torsion_mask': start_torsion_mask[0],
         'trans': traj_trans,
         'rots': traj_rots,
-        'seqres': seqres,
+        'seqres': seqres.squeeze(0),
         'start_idx': start_idx,
         'end_idx': end_idx,
         'start_state': start_state,
@@ -90,7 +94,8 @@ def do(model, name, seqres):
         ref_kmeans = pkl_metadata['ref_kmeans']
     else:
         with temp_seed(137):
-            feats, ref = mdgen.analysis.get_featurized_traj(f'{args.mddir}/{name}/{name}', sidechains=True)
+            feats, _ref = mdgen.analysis.get_featurized_traj(f'{args.mddir}/{name}/{name}', sidechains=True)
+            ref = _ref[::args.stride]
             tica, _ = mdgen.analysis.get_tica(ref)
             kmeans, ref_kmeans = mdgen.analysis.get_kmeans(tica.transform(ref))
             try:
@@ -117,7 +122,7 @@ def do(model, name, seqres):
         print('No start or end state found for ', name, 'skipping...')
         return
 
-    arr = np.lib.format.open_memmap(f'{args.data_dir}/{name}.npy', 'r')
+    arr = np.lib.format.open_memmap(f'{args.data_dir}/{name}{args.suffix}.npy', 'r')
 
     metadata = []
     for i in tqdm.tqdm(range(args.num_batches), desc='num batch'):
@@ -152,7 +157,9 @@ def do(model, name, seqres):
 
 @torch.no_grad()
 def main():
-    model = NewMDGenWrapper.load_from_checkpoint(args.sim_ckpt)
+    checkpoint = torch.load(args.sim_ckpt, weights_only=False)  # Explicitly allow full load
+    model = NewMDGenWrapper(**checkpoint["hyper_parameters"])
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval().to('cuda')
     df = pd.read_csv(args.split, index_col='name')
     names = np.array(df.index)

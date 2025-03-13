@@ -45,6 +45,10 @@ def get_msm(traj, lag=1000, nstates=10):
     return msm, pcca, cmsm
 
 def discretize(traj, kmeans, msm):
+    print("Shape of traj:", traj.shape)
+    print("Shape of cluster centers:", kmeans.cluster_centers_.shape)
+    transformed_traj = kmeans.transform(traj)
+    print("Shape of transformed traj:", transformed_traj.shape)
     return msm.metastable_assignments[kmeans.transform(traj)[:,0]]
 
 def load_tps_ensemble(name, directory):

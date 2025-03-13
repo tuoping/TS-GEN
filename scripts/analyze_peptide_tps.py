@@ -16,6 +16,7 @@ parser.add_argument('--save_name', type=str, default='out.pkl')
 parser.add_argument('--pdb_id', nargs='*', default=[])
 parser.add_argument('--no_overwrite', nargs='*', default=[])
 parser.add_argument('--num_workers', type=int, default=1)
+parser.add_argument('--stride', type=int, default=1)
 args = parser.parse_args()
 
 import mdgen.analysis
@@ -29,9 +30,10 @@ def main(name):
     np.random.seed(137)
     name = name.split('_')[0]
 
-    feats, ref = mdgen.analysis.get_featurized_traj(f'{args.mddir}/{name}/{name}', sidechains=True)
+    feats, _ref = mdgen.analysis.get_featurized_traj(f'{args.mddir}/{name}/{name}', sidechains=True)
+    ref = _ref[::args.stride]
 
-    tica, _ = mdgen.analysis.get_tica(ref)
+    tica, _ = mdgen.analysis.get_tica(ref, lag=1000//args.stride)
     out = pickle.load(open(os.path.join(args.pdbdir, f'{name}_metadata.pkl'), 'rb'))
     msm = out['msm']
     cmsm = out['cmsm']
@@ -81,7 +83,7 @@ def main(name):
     out[f'gen_valid_prob'] = gen_prob[gen_prob > 0].mean()
     out[f'gen_valid_rate'] = (gen_prob > 0).mean()
     out[f'gen_JSD'] = jensenshannon(ref_stateprobs, gen_stateprobs)
-
+    '''
     ### Replica analysis
     rep_feats, rep = mdgen.analysis.get_featurized_traj(f'{args.repdir}/{name}', sidechains=True)
     rep_lens = [999999, 500000, 300000, 200000, 100000, 50000, 20000]
@@ -143,7 +145,7 @@ def main(name):
     axs[1, 1].imshow(data, cmap='viridis')
     axs[1, 1].set_yticks(range(len(row_names)))
     axs[1, 1].set_yticklabels(row_names)
-
+    '''
     gen_stack_all = np.stack(gen_traj_list, axis = 0)
 
     for i in range(4):
@@ -164,7 +166,7 @@ def main(name):
 
     if args.plot:
         os.makedirs(args.outdir, exist_ok=True)
-        fig.savefig(f'{args.outdir}/{name}.pdf')
+        fig.savefig(f'{args.outdir}/{name}.png')
 
     with open(f"{args.outdir}/{name}.pkl", 'wb') as f:
         f.write(pickle.dumps(out))

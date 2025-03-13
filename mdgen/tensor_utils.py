@@ -77,18 +77,37 @@ def one_hot(x, v_bins):
 
 
 def batched_gather(data, inds, dim=0, no_batch_dims=0):
-    ranges = []
-    for i, s in enumerate(data.shape[:no_batch_dims]):
-        r = torch.arange(s)
-        r = r.view(*(*((1,) * i), -1, *((1,) * (len(inds.shape) - i - 1))))
-        ranges.append(r)
+    # ranges = []
+    # for i, s in enumerate(data.shape[:no_batch_dims]):
+    #     r = torch.arange(s)
+    #     r = r.view(*(*((1,) * i), -1, *((1,) * (len(inds.shape) - i - 1))))
+    #     ranges.append(r)
+    # remaining_dims = [
+    #     slice(None) for _ in range(len(data.shape) - no_batch_dims)
+    # ]
+    # remaining_dims[dim - no_batch_dims if dim >= 0 else dim] = inds
+    # ranges.extend(remaining_dims)
+    # return data[ranges]
+    shape_d = data.shape
+    shape_i = inds.shape
+    _data = data
+    if len(shape_d)+dim < no_batch_dims:
+        _data = _data.view(*(1,)*(no_batch_dims-len(shape_d)-dim), *shape_d)
 
-    remaining_dims = [
-        slice(None) for _ in range(len(data.shape) - no_batch_dims)
-    ]
-    remaining_dims[dim - no_batch_dims if dim >= 0 else dim] = inds
-    ranges.extend(remaining_dims)
-    return data[ranges]
+    shape_d = _data.shape
+    for n in range(no_batch_dims):
+        if _data.shape[n] < inds.shape[n]:
+
+            _data = _data.expand(*(-1,)*(n), shape_i[n], *(-1,)*(len(shape_d)-n-1))
+
+    if dim == -2:
+        _inds = inds.unsqueeze(-1).expand(*(-1,)*(len(shape_i)), _data.shape[-1])
+        # return _data[...,inds,:]
+        return torch.gather(_data, dim=len(shape_i)-1, index=_inds).squeeze(len(shape_i)-1)
+    else:
+        _inds = inds
+        # return _data[...,inds]
+        return torch.gather(_data, dim=len(shape_i)-1, index=_inds).squeeze(len(shape_i)-1)
 
 
 # With tree_map, a poor man's JAX tree_map

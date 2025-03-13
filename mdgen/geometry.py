@@ -8,23 +8,23 @@ from .tensor_utils import batched_gather
 
 def atom14_to_atom37(atom14: np.ndarray, aatype, atom14_mask=None):
     atom37 = batched_gather(
-        atom14,
-        rc.RESTYPE_ATOM37_TO_ATOM14[aatype],
+        torch.from_numpy(atom14),
+        torch.from_numpy(rc.RESTYPE_ATOM37_TO_ATOM14[aatype]).to(torch.int64),
         dim=-2,
         no_batch_dims=len(atom14.shape[:-2]),
     )
     atom37 *= rc.RESTYPE_ATOM37_MASK[aatype, :, None]
     if atom14_mask is not None:
         atom37_mask = batched_gather(
-            atom14_mask,
-            rc.RESTYPE_ATOM37_TO_ATOM14[aatype],
+            torch.from_numpy(atom14_mask),
+            torch.from_numpy(rc.RESTYPE_ATOM37_TO_ATOM14[aatype]).to(torch.int64),
             dim=-1,
             no_batch_dims=len(atom14.shape[:-2]),
         )
         atom37_mask *= rc.RESTYPE_ATOM37_MASK[aatype]
-        return atom37, atom37_mask
+        return atom37.numpy(), atom37_mask.numpy()
     else:
-        return atom37
+        return atom37.numpy()
 
 
 def atom37_to_atom14(atom37: np.ndarray, aatype, atom37_mask=None):
@@ -128,7 +128,7 @@ def atom37_to_torsions(all_atom_positions, aatype, all_atom_mask=None):
 
     atom_indices = chi_atom_indices[..., aatype, :, :]
     chis_atom_pos = batched_gather(
-        all_atom_positions, atom_indices, -2, len(atom_indices.shape[:-2])
+        all_atom_positions, atom_indices, -2, len(atom_indices.shape[:-1])
     )
 
     chi_angles_mask = list(rc.chi_angles_mask)
@@ -141,7 +141,7 @@ def atom37_to_torsions(all_atom_positions, aatype, all_atom_mask=None):
         all_atom_mask,
         atom_indices,
         dim=-1,
-        no_batch_dims=len(atom_indices.shape[:-2]),
+        no_batch_dims=len(atom_indices.shape[:-1]),
     )
     chi_angle_atoms_mask = torch.prod(
         chi_angle_atoms_mask, dim=-1, dtype=chi_angle_atoms_mask.dtype
@@ -153,7 +153,7 @@ def atom37_to_torsions(all_atom_positions, aatype, all_atom_mask=None):
             pre_omega_atom_pos[..., None, :, :],
             phi_atom_pos[..., None, :, :],
             psi_atom_pos[..., None, :, :],
-            chis_atom_pos,
+            chis_atom_pos.squeeze(1),
         ],
         dim=-3,
     )
@@ -166,7 +166,7 @@ def atom37_to_torsions(all_atom_positions, aatype, all_atom_mask=None):
             chis_mask,
         ],
         dim=-1,
-    )
+    ).squeeze(1)
 
     torsion_frames = Rigid.from_3_points(
         torsions_atom_pos[..., 1, :],
