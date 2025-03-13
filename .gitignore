@@ -3,3 +3,4 @@ workdir
 submit.sh
 *.ckpt
 *.ipynb
+python=3.10
