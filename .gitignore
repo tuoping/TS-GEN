@@ -1,6 +1,7 @@
 data/
 workdir
-submit.sh
+submit*
 *.ckpt
 *.ipynb
 python=3.10
+slurm-*
