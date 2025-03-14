@@ -24,7 +24,9 @@ names = df.index
 def main():
     jobs = []
     for name in names:
-        if os.path.exists(f'{args.outdir}/{name}{args.suffix}.npy'): continue
+        if os.path.exists(f'{args.outdir}/{name}{args.suffix}.npy'): 
+            if os.path.exists(f'{args.outdir}/{name}_cond_{args.suffix}.npy'):
+                continue
         jobs.append(name)
 
     if args.num_workers > 1:
@@ -75,6 +77,8 @@ else:
         traj.superpose(traj)
         arr = traj_to_atom14(traj)
         np.save(f'{args.outdir}/{name}{args.suffix}.npy', arr[::args.stride])
+        cond_traj = np.loadtxt(f'{args.sim_dir}/_TICA_space/{name}_pca_tica.txt')
+        np.save(f'{args.outdir}/{name}_cond_{args.suffix}.npy', cond_traj[::args.stride])
 
 if __name__ == "__main__":
     main()

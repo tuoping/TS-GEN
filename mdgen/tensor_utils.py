@@ -92,20 +92,19 @@ def batched_gather(data, inds, dim=0, no_batch_dims=0):
     shape_i = inds.shape
     _data = data
     if len(shape_d)+dim < no_batch_dims:
-        _data = _data.view(*(1,)*(no_batch_dims-len(shape_d)-dim), *shape_d)
-
+        _data = _data.view(-1, *(1,)*(no_batch_dims-len(shape_d)-dim), *shape_d[1:])
     shape_d = _data.shape
     for n in range(no_batch_dims):
         if _data.shape[n] < inds.shape[n]:
 
             _data = _data.expand(*(-1,)*(n), shape_i[n], *(-1,)*(len(shape_d)-n-1))
-
     if dim == -2:
         _inds = inds.unsqueeze(-1).expand(*(-1,)*(len(shape_i)), _data.shape[-1])
+        _inds = _inds.expand(_data.shape[0], *(-1,)*(len(shape_i)))
         # return _data[...,inds,:]
         return torch.gather(_data, dim=len(shape_i)-1, index=_inds).squeeze(len(shape_i)-1)
     else:
-        _inds = inds
+        _inds = inds.expand(_data.shape[0], *(-1,)*(len(shape_i)-1))
         # return _data[...,inds]
         return torch.gather(_data, dim=len(shape_i)-1, index=_inds).squeeze(len(shape_i)-1)
 

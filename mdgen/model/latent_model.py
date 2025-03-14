@@ -259,6 +259,37 @@ class LatentMDGenModel(nn.Module):
                 return logits[:, None, :]
             latent[:, :, :, -20:] = latent[:, :, :, -20:] + logits[:, None, :, :]
         return latent
+    
+
+    def get_latent_gradient(self, x, t, mask, start_frames=None, end_frames=None, x_cond=None, x_cond_mask=None, aatype=None):
+        """
+        Computes the gradient of the latent output with respect to the input x.
+
+        Args:
+            x: Input tensor.
+            t: Time tensor.
+            mask: Mask tensor.
+            start_frames: Start frames tensor.
+            end_frames: End frames tensor.
+            x_cond: Conditional input tensor.
+            x_cond_mask: Conditional mask tensor.
+            aatype: Amino acid type tensor.
+
+        Returns:
+            grad: Gradient of the latent output with respect to the input x.
+        """
+        # Ensure that x requires gradients
+        x.requires_grad_(True)
+
+        # Forward pass to compute the latent output
+        latent = self.forward(x, t, mask, start_frames, end_frames, x_cond, x_cond_mask, aatype)
+
+        # Compute the gradient of the latent output with respect to x
+        grad = torch.autograd.grad(outputs=latent, inputs=x,
+                                   grad_outputs=torch.ones_like(latent),
+                                   create_graph=True, retain_graph=True)[0]
+
+        return grad
 
     # x, t, mask, start_frames=None, end_frames=None, x_cond=None, x_cond_mask=None, aatype=None
     def forward_inference(self, x, t, mask,

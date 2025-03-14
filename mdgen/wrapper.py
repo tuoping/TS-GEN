@@ -342,7 +342,8 @@ class NewMDGenWrapper(Wrapper):
         if self.args.sim_condition:
             cond_mask[:, 0] = 1
         if self.args.tps_condition:
-            cond_mask[:, 0] = cond_mask[:, -1] = 1
+            # cond_mask[:, 0] = cond_mask[:, -1] = 1
+            cond_mask[:, :] = 1
         if self.args.cond_interval:
             cond_mask[:, ::self.args.cond_interval] = 1
         if self.args.inpainting or self.args.dynamic_mpnn or self.args.mpnn:

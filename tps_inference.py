@@ -45,30 +45,46 @@ os.makedirs(args.out_dir, exist_ok=True)
 
 def get_sample(arr, seqres, start_idxs, end_idxs, start_state, end_state, num_frames=1000):
     start_idx = np.random.choice(start_idxs, 1).item()
-    end_idx = np.random.choice(end_idxs, 1).item()
+    end_idx = np.random.choice(end_idxs[np.where(end_idxs >= start_idx+num_frames)[0]], 1).item()
+    interval_idx = (end_idx - start_idx) // num_frames
+    end_idx = start_idx + interval_idx * num_frames
+    # end_idx = start_idx + num_frames
+    print('start_idx', start_idx, 'end_idx', end_idx, 'interval_idx', interval_idx)
 
     start_arr = np.copy(arr[start_idx:start_idx + 1]).astype(np.float32)
     end_arr = np.copy(arr[end_idx:end_idx + 1]).astype(np.float32)
     seqres = torch.tensor([restype_order[c] for c in seqres]).unsqueeze(0)
-
     start_frames = atom14_to_frames(torch.from_numpy(start_arr))
 
     start_atom37 = torch.from_numpy(atom14_to_atom37(start_arr, seqres)).float()
     start_torsions, start_torsion_mask = atom37_to_torsions(start_atom37, seqres[None])
-    
     end_frames = atom14_to_frames(torch.from_numpy(end_arr))
     end_atom37 = torch.from_numpy(atom14_to_atom37(end_arr, seqres)).float()
     end_torsions, end_torsion_mask = atom37_to_torsions(end_atom37, seqres[None])
     L = start_frames.shape[1]
-    traj_torsions = start_torsions.expand(num_frames, -1, -1, -1).clone()
-    traj_torsions[-1] = end_torsions
+    
+    traj_frames = atom14_to_frames(torch.from_numpy(arr[start_idx:end_idx+1:interval_idx]))
+    traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[start_idx:end_idx+1:interval_idx], seqres)).float()
+    traj_torsions = atom37_to_torsions(traj_atom37, seqres[None])[0]
+    traj_trans = traj_frames._trans.clone()
+    traj_rots = traj_frames._rots._rot_mats.clone()
+    # for idx in range(start_idx, end_idx + 1, interval_idx):
+    #     if idx == start_idx:
+    #         traj_frames = atom14_to_frames(torch.from_numpy(arr[idx:idx+1]))
+    #         traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[idx:idx+1], seqres)).float()
+    #         traj_torsions = atom37_to_torsions(traj_atom37, seqres[None])[0]
+    #         traj_trans = traj_frames._trans.clone()
+    #         traj_rots = traj_frames._rots._rot_mats.clone()
+    #     else:
+    #         traj_frames = atom14_to_frames(torch.from_numpy(arr[idx:idx+1]))
+    #         traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[idx:idx+1], seqres)).float()
+    #         traj_torsions = torch.cat([traj_torsions, atom37_to_torsions(traj_atom37, seqres[None])[0]], dim=0)
+    #         traj_trans = torch.cat([traj_trans, traj_frames._trans.clone()], dim=0)
+    #         traj_rots = torch.cat([traj_rots, traj_frames._rots._rot_mats.clone()], dim=0)
 
-    traj_trans = start_frames._trans.expand(num_frames, -1, -1).clone()
-    traj_trans[-1] = end_frames._trans
-
-    traj_rots = start_frames._rots._rot_mats.expand(num_frames, -1, -1, -1).clone()
-    traj_rots[-1] = end_frames._rots._rot_mats
-
+    assert traj_trans.shape[0] == num_frames + 1
+    assert traj_rots.shape[0] == num_frames + 1
+    assert traj_torsions.shape[0] == num_frames + 1
     mask = torch.ones(L)
     return {
         'torsions': traj_torsions,

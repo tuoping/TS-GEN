@@ -35,8 +35,10 @@ class MDGenDataset(torch.utils.data.Dataset):
         else:
             full_name = name
         arr = np.lib.format.open_memmap(f'{self.args.data_dir}/{full_name}{self.args.suffix}.npy', 'r')
+        arr_cond = np.lib.format.open_memmap(f'{self.args.data_dir}/{full_name}_cond_{self.args.suffix}.npy', 'r')
         if self.args.frame_interval:
             arr = arr[::self.args.frame_interval]
+            arr_cond = arr_cond[::self.args.frame_interval]
         
         frame_start = np.random.choice(np.arange(arr.shape[0] - self.args.num_frames))
         if self.args.overfit_frame:
@@ -44,8 +46,10 @@ class MDGenDataset(torch.utils.data.Dataset):
         end = frame_start + self.args.num_frames
         # arr = np.copy(arr[frame_start:end]) * 10 # convert to angstroms
         arr = np.copy(arr[frame_start:end]).astype(np.float32) # / 10.0 # convert to nm
+        arr_cond = np.copy(arr_cond[frame_start:end]).astype(np.float32)
         if self.args.copy_frames:
             arr[1:] = arr[0]
+            arr_cond[1:] = arr_cond[0]
 
         # arr should be in ANGSTROMS
         frames = atom14_to_frames(torch.from_numpy(arr))
@@ -98,5 +102,7 @@ class MDGenDataset(torch.utils.data.Dataset):
             'rots': frames._rots._rot_mats,
             'seqres': seqres,
             'mask': mask, # (L,)
+            "x_cond": torch.from_numpy(arr_cond[:2]).float(),
+            "x_cond_mask": torch.ones(2, dtype=torch.float32),
         }
 
