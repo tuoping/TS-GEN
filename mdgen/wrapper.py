@@ -406,6 +406,83 @@ class NewMDGenWrapper(Wrapper):
         self.last_log_time = time.time()
         return loss.mean()
 
+    def likelihood_inference(self, batch):
+
+        prep = self.prep_batch(batch)
+
+        latents = prep['latents']
+        if not self.args.no_frames:
+            rigids = prep['rigids']
+            B, T, L = rigids.shape
+        else:
+            B, T, L, _ = latents.shape
+
+        if self.args.design:
+            zs_continuous = torch.randn(B, T, L, self.latent_dim - 20, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, L, 20, device=latents.device)).sample()
+            zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
+            zs = torch.cat([zs_continuous, zs_discrete], -1)
+        else:
+            zs = torch.randn(B, T, L, self.latent_dim, device=self.device, requires_grad=True)
+
+        # sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)
+        # samples = sample_fn(
+        #     zs,
+        #     partial(self.model.forward_inference, **prep['model_kwargs'])
+        # )[-1]
+        
+        sample_fn = self.transport_sampler.sample_ode_likelihood(sampling_method=self.args.sampling_method)
+        reverse_sample_fn = self.transport_sampler.sample_ode_likelihood(sampling_method=self.args.sampling_method, reverse=True)
+        # num_steps=self.args.inference_steps)  # default to ode
+
+        forward_likelihood, samples = sample_fn(
+            zs,
+            partial(self.model.forward_inference, **prep['model_kwargs'])
+        )
+
+        reverse_likelihood, _ = reverse_sample_fn(
+            zs,
+            partial(self.model.forward_inference, **prep['model_kwargs'])
+        )
+        
+        if self.args.no_frames:
+            atom14 = atom37_to_atom14(
+                samples.cpu().numpy().reshape(B, T, L, 37, 3),
+                batch['seqres'][0].cpu().numpy()
+            )
+            return torch.from_numpy(atom14).float(), None
+            
+        offsets = samples[..., :7]
+        
+        if self.args.tps_condition or self.args.inpainting:
+            torsions = samples[..., 14:28]
+            logits = samples[..., -20:]
+        else:
+            torsions = samples[..., 7:21]
+            logits = samples[..., -20:]
+
+        
+        if self.args.no_offsets:
+            frames = Rigid.from_tensor_7(offsets, normalize_quats=True)
+        else:
+            frames = rigids[:, 0:1].compose(Rigid.from_tensor_7(offsets, normalize_quats=True))
+        if self.args.design:
+            trans = frames.get_trans()
+            rots = frames.get_rots().get_rot_mats()
+            frames = Rigid(trans=trans, rots=Rotation(rot_mats=rots))
+        torsions = torsions.reshape(B, T, L, 7, 2)
+        if not self.args.oracle:
+            torsions = torsions / torch.linalg.norm(torsions, dim=-1, keepdims=True)
+        atom14 = frames_torsions_to_atom14(frames, torsions.view(B, T, L, 7, 2),
+                                           batch['seqres'][:, None].expand(B, T, L))
+
+        if self.args.design:
+            aa_out = torch.argmax(logits, -1)
+        else:
+            aa_out = batch['seqres'][:, None].expand(B, T, L)
+        return atom14, aa_out, -forward_likelihood, -reverse_likelihood
+
+
     def inference(self, batch):
 
         prep = self.prep_batch(batch)

@@ -457,6 +457,7 @@ class Sampler:
             num_steps=50,
             atol=1e-6,
             rtol=1e-3,
+            reverse=False,
     ):
 
         """returns a sampling function for calculating likelihood with given ODE settings
@@ -471,14 +472,22 @@ class Sampler:
 
         def _likelihood_drift(x, t, model, **model_kwargs):
             x, _ = x
-            eps = th.randint(2, x.size(), dtype=th.float, device=x.device) * 2 - 1
-            t = th.ones_like(t) * (1 - t)
+            eps = th.randint(2, x.size(), dtype=th.float, device=x.device, requires_grad=True) * 2 - 1
+            if reverse:
+                t = th.ones_like(t) * (1 - t)
             with th.enable_grad():
-                x.requires_grad = True
+                # x.requires_grad = True
+                assert x.requires_grad
+                ### This way doesn't accumulate the gradient through the ODE steps
                 grad = th.autograd.grad(th.sum(self.drift(x, t, model, **model_kwargs) * eps), x)[0]
-                logp_grad = th.sum(grad * eps, dim=tuple(range(1, len(x.size()))))
+                ### This way accumulates the gradient through the ODE steps
+                # l = th.sum(self.drift(x, t, model, **model_kwargs) * eps)
+                # l.backward(retain_graph=True)
+                # grad = x.grad.clone()
+                # x.grad.zero_()
+                logp_grad = th.sum(grad * eps, dim=tuple(range(2, len(x.size()))))
                 drift = self.drift(x, t, model, **model_kwargs)
-            return (-drift, logp_grad)
+            return (drift, logp_grad)
 
         t0, t1 = self.transport.check_interval(
             self.transport.train_eps,
@@ -500,12 +509,15 @@ class Sampler:
         )
 
         def _sample_fn(x, model, **model_kwargs):
-            init_logp = th.zeros(x.size(0)).to(x)
+            init_logp = th.zeros(x.size()[:2]).to(x)
             input = (x, init_logp)
             drift, delta_logp = _ode.sample(input, model, **model_kwargs)
             drift, delta_logp = drift[-1], delta_logp[-1]
             prior_logp = self.transport.prior_logp(drift)
-            logp = prior_logp - delta_logp
+            if reverse:
+                logp = prior_logp + delta_logp
+            else:
+                logp = prior_logp - delta_logp
             return logp, drift
 
         return _sample_fn

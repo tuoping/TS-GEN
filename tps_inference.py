@@ -139,7 +139,8 @@ def do(model, name, seqres):
         return
 
     arr = np.lib.format.open_memmap(f'{args.data_dir}/{name}{args.suffix}.npy', 'r')
-
+    ofile_freeE_forward = open(os.path.join(args.out_dir, f"{name}_freeE_forward.dat"), "wb")
+    ofile_freeE_reverse = open(os.path.join(args.out_dir, f"{name}_freeE_reverse.dat"), "wb")
     metadata = []
     for i in tqdm.tqdm(range(args.num_batches), desc='num batch'):
         batch_list = []
@@ -150,16 +151,18 @@ def do(model, name, seqres):
         batch = tensor_tree_map(lambda x: x.cuda(), batch)
         print('Start tps for ', name, 'with start coords', batch['trans'][0, 0, 0])
         print('Start tps for ', name, 'with end coords', batch['trans'][0, -1, 0])
-        atom14s, _ = model.inference(batch)
+        atom14s, _, freeE_forward, freeE_reverse = model.likelihood_inference(batch)
         for j in range(args.batch_size):
             idx = i * args.batch_size + j
             path = os.path.join(args.out_dir, f'{name}_{idx}.pdb')
-            atom14_to_pdb(atom14s[j].cpu().numpy(), batch['seqres'][0].cpu().numpy(), path)
+            atom14_to_pdb(atom14s[j].detach().cpu().numpy(), batch['seqres'][0].cpu().numpy(), path)
 
             traj = mdtraj.load(path)
             traj.superpose(traj)
             traj.save(os.path.join(args.out_dir, f'{name}_{idx}.xtc'))
             traj[0].save(os.path.join(args.out_dir, f'{name}_{idx}.pdb'))
+            np.savetxt(ofile_freeE_forward, freeE_forward.detach().cpu().numpy(), fmt="%8.4e", delimiter="")
+            np.savetxt(ofile_freeE_reverse, freeE_reverse.detach().cpu().numpy(), fmt="%8.4e", delimiter="")
             metadata.append({
                 'name': name,
                 'start_idx': batch['start_idx'][j].cpu().item(),
@@ -171,7 +174,7 @@ def do(model, name, seqres):
     json.dump(metadata, open(f'{args.out_dir}/{name}_metadata.json', 'w'))
 
 
-@torch.no_grad()
+# @torch.no_grad()
 def main():
     checkpoint = torch.load(args.sim_ckpt, weights_only=False)  # Explicitly allow full load
     model = NewMDGenWrapper(**checkpoint["hyper_parameters"])
