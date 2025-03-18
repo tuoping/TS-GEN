@@ -3,7 +3,7 @@ args = parse_train_args()
 from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
-import torch, os, wandb
+import torch, os
 from mdgen.dataset import MDGenDataset
 from mdgen.wrapper import NewMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary

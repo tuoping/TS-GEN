@@ -190,6 +190,7 @@ class NewMDGenWrapper(Wrapper):
             'no_offsets',
             'no_frames',
             "tps_condition",
+            "fed_condition",
             "design"
         ]:
             if not hasattr(args, key):
@@ -342,7 +343,8 @@ class NewMDGenWrapper(Wrapper):
         if self.args.sim_condition:
             cond_mask[:, 0] = 1
         if self.args.tps_condition:
-            # cond_mask[:, 0] = cond_mask[:, -1] = 1
+            cond_mask[:, 0] = cond_mask[:, -1] = 1
+        if self.args.fed_condition:
             cond_mask[:, :] = 1
         if self.args.cond_interval:
             cond_mask[:, ::self.args.cond_interval] = 1
@@ -411,6 +413,7 @@ class NewMDGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
 
         latents = prep['latents']
+        latents.requires_grad_(True)
         if not self.args.no_frames:
             rigids = prep['rigids']
             B, T, L = rigids.shape
@@ -441,7 +444,7 @@ class NewMDGenWrapper(Wrapper):
         )
 
         reverse_likelihood, _ = reverse_sample_fn(
-            zs,
+            latents,
             partial(self.model.forward_inference, **prep['model_kwargs'])
         )
         

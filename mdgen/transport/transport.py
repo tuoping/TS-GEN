@@ -515,9 +515,9 @@ class Sampler:
             drift, delta_logp = drift[-1], delta_logp[-1]
             prior_logp = self.transport.prior_logp(drift)
             if reverse:
-                logp = prior_logp + delta_logp
+                logp =  delta_logp
             else:
-                logp = prior_logp - delta_logp
+                logp =  delta_logp
             return logp, drift
 
         return _sample_fn

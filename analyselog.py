@@ -149,7 +149,7 @@ def plot_vallosses(dir_dir_b1024, k2 = "val_loss", after_epoch=None, before_epoc
             print("before_idx = ", before_idx)
         
         plt.subplot(121)
-        plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx]), alltrainlosses_dir_b1024[after_idx:before_idx])
+        plt.plot(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[::500], alltrainlosses_dir_b1024[after_idx:before_idx][::500])
         plt.semilogy()
         setfigform_simple("epoch","Train loss")
     
@@ -161,7 +161,7 @@ def plot_vallosses(dir_dir_b1024, k2 = "val_loss", after_epoch=None, before_epoc
         if before_epoch is not None and before_epoch != "None":
             before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][-1]
         plt.subplot(122)
-        plt.scatter(np.array(alltrainsteps_dir_b1024)[after_idx:before_idx], alltrainlosses_dir_b1024[after_idx:before_idx])
+        plt.plot(np.array(alltrainsteps_dir_b1024)[after_idx:before_idx][::500], alltrainlosses_dir_b1024[after_idx:before_idx][::500])
         plt.semilogy()
         setfigform_simple("epoch","Validation loss")
     fig.tight_layout()
