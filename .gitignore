@@ -7,3 +7,4 @@ python=3.10
 slurm-*
 **/__pycache__
 *.log
+*.xyz
