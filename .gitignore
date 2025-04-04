@@ -8,3 +8,4 @@ slurm-*
 **/__pycache__
 *.log
 *.xyz
+notebooks/check*
