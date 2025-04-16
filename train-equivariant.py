@@ -4,7 +4,7 @@ from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
 import torch, os
-from mdgen.dataset import MDGenDataset
+from mdgen.dataset import MDGenDataset_CrCoNi
 from mdgen.equivariant_wrapper import EquivariantMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 import pytorch_lightning as pl
@@ -12,22 +12,12 @@ import pytorch_lightning as pl
 
 torch.set_float32_matmul_precision('medium')
 
-if args.wandb:
-    wandb.init(
-        entity=os.environ["WANDB_ENTITY"],
-        settings=wandb.Settings(start_method="fork"),
-        project="mdgen",
-        name=args.run_name,
-        config=args,
-    )
-
-
-trainset = MDGenDataset(args, split=args.train_split)
+trainset = MDGenDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff)
 
 if args.overfit:
     valset = trainset    
 else:
-    valset = MDGenDataset(args, split=args.val_split, repeat=args.val_repeat)
+    valset = MDGenDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff)
 
 train_loader = torch.utils.data.DataLoader(
     trainset,
@@ -41,7 +31,7 @@ val_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size,
     num_workers=args.num_workers,
 )
-model = EquivariantMDGenWrapper(args)
+# model = EquivariantMDGenWrapper(args)
 # checkpoint = torch.load(args.ckpt, weights_only=False)
 # model.load_state_dict(checkpoint["state_dict"])
 '''  
