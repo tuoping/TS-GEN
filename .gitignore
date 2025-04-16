@@ -5,8 +5,7 @@ submit*
 *.ipynb
 python=3.10
 slurm-*
-*/__pycache__
-*/*/__pycache__
+mdgen/__pycache__
 *.log
 *.xyz
 notebooks/check*
