@@ -21,7 +21,7 @@ class Encoder(nn.Module):
         self.edge_dim      = edge_dim
         
         # self.embed_atom = nn.Embedding(num_species, node_dim)
-        self.embed_atom = nn.Linear(20, node_dim)
+        self.embed_atom = nn.Linear(5, node_dim)
         self.embed_bond = MLP([init_edge_dim, edge_dim, edge_dim], act=nn.SiLU())
         self.phi_s = MLP([node_dim*2 + edge_dim, node_dim, node_dim], act=nn.SiLU())
         self.phi_h = MLP([node_dim*2,            node_dim, node_dim], act=nn.SiLU())
@@ -108,8 +108,8 @@ class Decoder(nn.Module):
         h_ = h @ self.Oh
         v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
         # return h_out, v_out.squeeze()
-        h_out_1 = h_[:,:-20]
-        h_out_2 = torch.nn.functional.softmax(h_[:,-20:], dim=1)
+        h_out_1 = h_[:,:-5]
+        h_out_2 = torch.nn.functional.softmax(h_[:,-5:], dim=1)
         return torch.hstack([h_out_1, h_out_2]), v_out.squeeze()
 
     def extra_repr(self) -> str:
@@ -146,7 +146,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         self.max_cell_images_per_dim = 5
 
         cond_dim = latent_dim
-        if self.design: cond_dim -= 20
+        if self.design: cond_dim -= 5
         self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
         self.mask_to_emb = nn.Embedding(2, embed_dim)
 
@@ -174,7 +174,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 max_num_neighbors_threshold=self.max_num_neighbors_threshold,
                 max_cell_images_per_dim=self.max_cell_images_per_dim,
             )
-            self.otf_graph = False
+            # self.otf_graph = False
 
         out = get_pbc_distances(
             x.view(-1, 3),
@@ -194,10 +194,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         edge_attr = torch.hstack([edge_vec, edge_len.view(-1, 1)])
 
         if aatype is not None:
-            species = aatype.view(-1,20)
+            species = aatype.view(-1,5)
         else:
             aatype = torch.zeros([N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=20, dtype=torch.float)
+            species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
             
         
         scaler_out, vector_out = self._graph_forward(species, edge_index, edge_attr, edge_vec, t, x_cond=x_cond.view(-1,3), x_cond_mask=x_cond_mask.view(-1))
@@ -205,3 +205,14 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
         else:
             return vector_out.view(B, T, N, -1)
+        
+    def forward_inference(self, x: Tensor, t: Tensor, 
+                cell=None, 
+                num_atoms=None,
+                x_cond=None, x_cond_mask=None, 
+                aatype=None):
+        if self.design:
+            raise NotImplementedError
+        else:
+            vector_out = self.forward(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
+            return vector_out

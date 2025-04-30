@@ -109,7 +109,6 @@ class MDGenDataset(torch.utils.data.Dataset):
 
 import os
 from sklearn.preprocessing import OneHotEncoder
-from mdgen.model.nn import periodic_radius_graph
 from torch_geometric.data import Data
 import ase.io
 
@@ -134,180 +133,114 @@ def remove_element(atoms, element=[]):
     indices_to_remove = [i for i, n in enumerate(atoms.get_atomic_numbers()) if n in element]
     del atoms[indices_to_remove]
 
+from ase.geometry.geometry import get_distances
+
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
-    def __init__(self, traj_dirname, cutoff, stage="train"):
+    def __init__(self, traj_dirname, cutoff, num_frames=None, stage="train"):
         self.max_num_edges = 4000
         self.cutoff = cutoff
         self.traj_filenames = []
+        self.traj_initial = []
         for u1 in range(5):
             for k in range(100):
                 if stage == "train":
                     criterion = (k%3 <= 1)
                     if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"training-{u1}-{k}.extxyz"))
+                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                        self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
                 elif stage == "val":
                     criterion = (k%3 > 1)
                     if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
+                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                        self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
+                elif stage == "save":
+                    self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
+                else:
+                    raise Exception(f"Wrong stage str {stage}")
+        self.num_frames = num_frames
+        self.stage = stage
     
     def __len__(self):
         return len(self.traj_filenames)
-
-    def _atomic_graph(self, data, cutoff):
-        cell = data.cell
-        edge_index, edge_vec = periodic_radius_graph(data.pos , cutoff, cell=cell)
-        edge_index = edge_index.T
-        edge_len = edge_vec.norm(dim=-1, keepdim=True)
-        edge_attr = torch.hstack([edge_vec, edge_len])
-        assert edge_index.shape[0] < self.max_num_edges, f"Too many edges {edge_index.shape[0]} > {self.max_num_edges}"
-        data.edge_index = torch.zeros((self.max_num_edges, 2), dtype=torch.long)
-        data.edge_index[:edge_index.shape[0], :] = edge_index
-        data.edge_attr = torch.zeros((self.max_num_edges, edge_attr.shape[1]), dtype=torch.float)
-        data.edge_attr[:edge_index.shape[0], :] = edge_attr
-        data.edge_len = torch.zeros((self.max_num_edges, 1), dtype=torch.float)
-        data.edge_len[:edge_index.shape[0], :] = edge_len
-        return data
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, random_starting_point=False):
         idx = idx % len(self.traj_filenames)
-        atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
-        num_atoms = len(atoms_list[0])
-        for atoms in atoms_list: 
-            remove_element(atoms)
-            atoms.wrap()
-            if len(atoms) != num_atoms:
-                print("Traj filename", self.traj_filenames[idx])
-                raise Exception("Atoms length mismatch", len(atoms), num_atoms)
-             
-        mask = torch.ones((num_atoms,), dtype=torch.float32)
-        v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)               
+        if self.stage == "save":
+            atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
+            num_atoms = len(atoms_list[0])
+            for atoms in atoms_list: 
+                remove_element(atoms)
+                atoms.wrap()
+                if len(atoms) != num_atoms:
+                    print("Traj filename", self.traj_filenames[idx])
+                    raise Exception("Atoms length mismatch", len(atoms), num_atoms)
 
-        # Onehot encoder for atom type
-        unique_numbers = np.concatenate([np.unique(atoms.numbers) for atoms in atoms_list])        
-        atom_encoder = OneHotEncoder(sparse_output=False)
-        atom_encoder.fit(unique_numbers.reshape(-1, 1))
+            mask = torch.ones((num_atoms,), dtype=torch.float32)
+            v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)               
 
-        dataset = []
-        for atoms in atoms_list[:1]:
-            inv_cell = np.linalg.pinv(np.array(atoms.cell))
-            z = atom_encoder.transform(atoms.numbers.reshape(-1, 1))
-            padded_z = np.zeros((num_atoms, 20))
-            padded_z[:, :z.shape[1]] = z
-            num_atoms = len(atoms)
-            data = Data(
-                z          = torch.tensor(padded_z,               dtype=torch.float),
-                pos        = torch.tensor(atoms.positions - np.ones(3)*0.5 @ atoms.cell, dtype=torch.float),
-                frac_pos        = torch.tensor(atoms.positions @ inv_cell - np.ones(3)*0.5, dtype=torch.float),
-                cell       = torch.tensor(atoms.cell, dtype=torch.float),
-                freq = torch.tensor(atoms.info["freq"], dtype=torch.float),
-                E_barrier = torch.tensor(atoms.info["E_barrier"], dtype=torch.float),
-                E_now = torch.tensor(atoms.info["E_now"], dtype=torch.float),
-                E_next = torch.tensor(atoms.info["E_next"], dtype=torch.float),
-                disp = torch.tensor(atoms.arrays["disp"], dtype=torch.float),
-                num_atoms = torch.tensor(num_atoms, dtype=torch.long),
-            )
-            dataset.append(data.clone())
-        return {
-            "name": "CrCoNi",
-            "species": torch.stack([data.z for data in dataset]),
-            "x": torch.stack([data.pos for data in dataset]),
-            "cell": torch.stack([data.cell for data in dataset]),
-            "num_atoms": torch.stack([data.num_atoms for data in dataset]),
-            "freq": torch.stack([data.freq for data in dataset]),
-            "E_barrier": torch.stack([data.E_barrier for data in dataset]),
-            "E_now": torch.stack([data.E_now for data in dataset]),
-            "E_next": torch.stack([data.E_next for data in dataset]),
-            "disp": torch.stack([data.disp for data in dataset]),
-            "mask": mask,
-            "v_mask": v_mask
-        }
+            # Onehot encoder for atom type
+            unique_numbers = np.concatenate([np.unique(atoms.numbers) for atoms in atoms_list])        
+            atom_encoder = OneHotEncoder(sparse_output=False)
+            atom_encoder.fit(unique_numbers.reshape(-1, 1))
+            start_i_traj = 0
+            end_i_traj = len(atoms_list)
+            dataset = []
+            for atoms in atoms_list[start_i_traj:end_i_traj]:
+                inv_cell = np.linalg.pinv(np.array(atoms.cell))
+                z = atom_encoder.transform(atoms.numbers.reshape(-1, 1))
+                padded_z = np.zeros((num_atoms, 5))
+                padded_z[:, :z.shape[1]] = z
+                num_atoms = len(atoms)
 
+                data = Data(
+                    z          = torch.tensor(padded_z,               dtype=torch.float32),
+                    pos        = torch.tensor(atoms.positions - np.ones(3)*0.5 @ atoms.cell, dtype=torch.float32),
+                    frac_pos        = torch.tensor(atoms.positions @ inv_cell - np.ones(3)*0.5, dtype=torch.float32),
+                    cell       = torch.tensor(np.array(atoms.cell), dtype=torch.float32),
+                    freq = torch.tensor(atoms.info["freq"], dtype=torch.float32),
+                    E_barrier = torch.tensor(atoms.info["E_barrier"], dtype=torch.float32),
+                    E_now = torch.tensor(atoms.info["E_now"], dtype=torch.float32),
+                    E_next = torch.tensor(atoms.info["E_next"], dtype=torch.float32),
+                    disp = torch.tensor(atoms.arrays["disp"], dtype=torch.float32),
+                    num_atoms = torch.tensor(num_atoms, dtype=torch.long),
+                )
+                dataset.append(data.clone())
+            if not os.path.exists("data/CrCoNi_data_posdisp/"):
+                os.makedirs("data/CrCoNi_data_posdisp/")
+            torch.save(dataset, f'data/CrCoNi_data_posdisp/dataset-{idx}.pt')
+            ase.io.write(f"data/CrCoNi_data_posdisp/initial-{idx}.xyz", atoms_list[0])
+            return len(dataset)
+        else:
+            dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+            if random_starting_point:
+                start_i_traj = np.random.randint(0, len(dataset), 1)[0]
+            else:
+                start_i_traj = 0
+            if self.num_frames is None:
+                self.num_frames = len(dataset)
+            end_i_traj = min(start_i_traj+self.num_frames, len(dataset))
 
-class _EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
-    def __init__(self, traj_dirname, cutoff, stage="train"):
-        self.max_num_edges = 4000
-        self.cutoff = cutoff
-        self.traj_filenames = []
-        for u1 in range(5):
-            for k in range(100):
-                if stage == "train":
-                    criterion = (k%3 <= 1)
-                    if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"training-{u1}-{k}.extxyz"))
-                elif stage == "val":
-                    criterion = (k%3 > 1)
-                    if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
-    
-    def __len__(self):
-        return len(self.traj_filenames)
+            num_atoms = dataset[0].num_atoms
+            mask = torch.ones((num_atoms,), dtype=torch.float32)
+            v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)   
 
-    def _atomic_graph(self, data, cutoff):
-        cell = data.cell
-        edge_index, edge_vec = periodic_radius_graph(data.pos , cutoff, cell=cell)
-        edge_index = edge_index.T
-        edge_len = edge_vec.norm(dim=-1, keepdim=True)
-        edge_attr = torch.hstack([edge_vec, edge_len])
-        assert edge_index.shape[0] < self.max_num_edges, f"Too many edges {edge_index.shape[0]} > {self.max_num_edges}"
-        data.edge_index = torch.zeros((self.max_num_edges, 2), dtype=torch.long)
-        data.edge_index[:edge_index.shape[0], :] = edge_index
-        data.edge_attr = torch.zeros((self.max_num_edges, edge_attr.shape[1]), dtype=torch.float)
-        data.edge_attr[:edge_index.shape[0], :] = edge_attr
-        data.edge_len = torch.zeros((self.max_num_edges, 1), dtype=torch.float)
-        data.edge_len[:edge_index.shape[0], :] = edge_len
-        return data
-    
-    def __getitem__(self, idx):
-        idx = idx % len(self.traj_filenames)
-        atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
-        num_atoms = len(atoms_list[0])
-        for atoms in atoms_list: 
-            remove_element(atoms)
-            atoms.wrap()
-            if len(atoms) != num_atoms:
-                print("Traj filename", self.traj_filenames[idx])
-                raise Exception("Atoms length mismatch", len(atoms), num_atoms)
+            dataset = dataset[start_i_traj:end_i_traj]
+            return {
+                "name": "CrCoNi",
+                "species": torch.stack([data.z for data in dataset]),
+                "x": torch.stack([data.pos for data in dataset]),
+                "cell": torch.stack([data.cell for data in dataset]),
+                "num_atoms": torch.stack([data.num_atoms for data in dataset]),
+                "freq": torch.stack([data.freq for data in dataset]),
+                "E_barrier": torch.stack([data.E_barrier for data in dataset]),
+                "E_now": torch.stack([data.E_now for data in dataset]),
+                "E_next": torch.stack([data.E_next for data in dataset]),
+                "disp": torch.stack([data.disp for data in dataset]),
+                "mask": mask,
+                "v_mask": v_mask
+            }
 
-        # Onehot encoder for atom type
-        unique_numbers = np.concatenate([np.unique(atoms.numbers) for atoms in atoms_list])        
-        atom_encoder = OneHotEncoder(sparse_output=False)
-        atom_encoder.fit(unique_numbers.reshape(-1, 1))
-
-        dataset = []
-        for atoms in atoms_list:
-            inv_cell = np.linalg.pinv(np.array(atoms.cell))
-            z = atom_encoder.transform(atoms.numbers.reshape(-1, 1))
-            data = Data(
-                z          = torch.tensor(z,               dtype=torch.float),
-                pos        = torch.tensor(atoms.positions - np.ones(3)*0.5 @ atoms.cell, dtype=torch.float),
-                frac_pos        = torch.tensor(atoms.positions @ inv_cell - np.ones(3)*0.5, dtype=torch.float),
-                cell       = torch.tensor(atoms.cell, dtype=torch.float),
-                freq = torch.tensor(atoms.info["freq"], dtype=torch.float),
-                E_barrier = torch.tensor(atoms.info["E_barrier"], dtype=torch.float),
-                E_now = torch.tensor(atoms.info["E_now"], dtype=torch.float),
-                E_next = torch.tensor(atoms.info["E_next"], dtype=torch.float),
-                disp = torch.tensor(atoms.arrays["disp"], dtype=torch.float),
-            )
-            dataset.append(data.clone())
-
-        for data in dataset:
-            data = self._atomic_graph(data, cutoff=self.cutoff)
             
-        mask = torch.ones((num_atoms,), dtype=torch.float32)
-        v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)
-        return {
-            "name": "CrCoNi",
-            "species": torch.stack([data.z for data in dataset]),
-            "edge_attr": torch.stack([data.edge_attr for data in dataset]),
-            "edge_index": torch.stack([data.edge_index for data in dataset]),
-            "freq": torch.stack([data.freq for data in dataset]),
-            "E_barrier": torch.stack([data.E_barrier for data in dataset]),
-            "E_now": torch.stack([data.E_now for data in dataset]),
-            "E_next": torch.stack([data.E_next for data in dataset]),
-            "disp": torch.stack([data.disp for data in dataset]),
-            "mask": mask,
-            "v_mask": v_mask
-        }
         
 
 class GemnetDataset_CrCoNi(torch.utils.data.Dataset):

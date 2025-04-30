@@ -109,8 +109,8 @@ class Wrapper(pl.LightningModule):
         self.print_log(prefix='val', save=False)
 
     def on_before_optimizer_step(self, optimizer):
-        if (self.trainer.global_step + 1) % self.args.print_freq == 0:
-            self.print_log()
+        # if (self.trainer.global_step + 1) % self.args.print_freq == 0:
+        #     self.print_log()
 
         if self.args.check_grad:
             for name, p in self.model.named_parameters():
@@ -170,6 +170,22 @@ class Wrapper(pl.LightningModule):
             filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
         )
         return optimizer
+
+        # # Add ReduceLROnPlateau scheduler
+        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        #     optimizer,
+        #     mode='min',                  # or 'max' depending on your metric
+        #     factor=0.1,                  # decay factor
+        #     patience=10,                 # epochs to wait before decaying
+        #     verbose=True
+        # )
+        # return {
+        #     'optimizer': optimizer,
+        #     'lr_scheduler': {
+        #         'scheduler': scheduler,
+        #         'monitor': 'val_loss'    # metric to monitor
+        #     }
+        # }
 
 
 class NewMDGenWrapper(Wrapper):

@@ -162,9 +162,9 @@ class Transport:
             assert self.model_type == ModelType.VELOCITY
             if self.args.dynamic_mpnn or self.args.mpnn:
                 t = torch.ones_like(t, device=t.device)
-                x_d = torch.zeros(xt.shape[0], xt.shape[2], 20, device=xt.device)
+                x_d = torch.zeros(xt.shape[0], xt.shape[2], 5, device=xt.device)
             else:
-                seq_one_hot = th.nn.functional.one_hot(aatype1, num_classes=20)
+                seq_one_hot = th.nn.functional.one_hot(aatype1, num_classes=5)
                 alphas, _ = t_to_alpha(t, self.args)
                 alphas = 1 + seq_one_hot * (alphas[:, None, None] - 1)
                 x_d = th.distributions.Dirichlet(alphas).sample()
@@ -178,8 +178,8 @@ class Transport:
 
         if self.args.design:
             if not (self.args.dynamic_mpnn or self.args.mpnn):
-                logits = model_output[:, :, :, -20:]
-                model_output = model_output[:, :, :, :-20]
+                logits = model_output[:, :, :, -5:]
+                model_output = model_output[:, :, :, :-5]
 
         terms = {}
         terms['t'] = t
@@ -202,7 +202,7 @@ class Transport:
                 if self.model_type == ModelType.NOISE:
                     terms['loss'] = mean_flat(weight * ((model_output - x0) ** 2), mask)
                 else:
-                    terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask)
+                    terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask) # loss by comparing the x_0
 
         # more changes for dirichlet flow matching
 
@@ -210,12 +210,12 @@ class Transport:
             if self.args.dynamic_mpnn or self.args.mpnn:
                 logits = model_output
                 terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
-                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,20), aatype1.reshape(-1))
+                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.reshape(-1))
                 terms['loss'] = loss_d
             else:
                 terms['loss_continuous'] = terms['loss']
                 seq_expanded = aatype1[:, None, :].expand(-1, xt.shape[1], -1)
-                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1, 20), seq_expanded.reshape(-1))
+                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1, 5), seq_expanded.reshape(-1))
                 terms['loss'] = loss_d * self.args.discrete_loss_weight + (1 - self.args.discrete_loss_weight) * terms['loss']
             terms['loss_discrete'] = loss_d
             terms['logits'] = logits

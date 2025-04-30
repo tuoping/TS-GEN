@@ -30,7 +30,7 @@ def simplex_proj(seq):
     return X.view(seq.shape)
 
 class DirichletConditionalFlow:
-    def __init__(self, K=20, alpha_min=1, alpha_max=100, alpha_spacing=0.01):
+    def __init__(self, K=5, alpha_min=1, alpha_max=100, alpha_spacing=0.01):
         self.alphas = np.arange(alpha_min, alpha_max + alpha_spacing, alpha_spacing)
         self.beta_cdfs = []
         self.bs = np.linspace(0, 1, 1000)

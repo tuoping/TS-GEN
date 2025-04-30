@@ -4,7 +4,7 @@ from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
 import torch, os
-from mdgen.dataset import MDGenDataset_CrCoNi
+from mdgen.dataset import EquivariantTransformerDataset_CrCoNi
 from mdgen.equivariant_wrapper import EquivariantMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 import pytorch_lightning as pl
@@ -12,12 +12,12 @@ import pytorch_lightning as pl
 
 torch.set_float32_matmul_precision('medium')
 
-trainset = MDGenDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff)
+trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, stage="train")
 
 if args.overfit:
     valset = trainset    
 else:
-    valset = MDGenDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff)
+    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, stage="val")
 
 train_loader = torch.utils.data.DataLoader(
     trainset,
@@ -31,10 +31,11 @@ val_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size,
     num_workers=args.num_workers,
 )
-# model = EquivariantMDGenWrapper(args)
+model = EquivariantMDGenWrapper(args)
 # checkpoint = torch.load(args.ckpt, weights_only=False)
+# model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
 # model.load_state_dict(checkpoint["state_dict"])
-'''  
+
 trainer = pl.Trainer(
     accelerator="gpu" if torch.cuda.is_available() else 'auto',
     max_epochs=args.epochs,
@@ -67,4 +68,3 @@ if args.validate:
     trainer.validate(model, val_loader, ckpt_path=args.ckpt)
 else:
     trainer.fit(model, train_loader, val_loader, ckpt_path=args.ckpt)
-'''

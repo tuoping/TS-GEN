@@ -12,15 +12,15 @@ def parse_train_args():
     
     ## Epoch settings
     group = parser.add_argument_group("Epoch settings")
-    group.add_argument("--epochs", type=int, default=100)
+    group.add_argument("--epochs", type=int, default=1000)
     group.add_argument("--overfit", action='store_true')
     group.add_argument("--overfit_peptide", type=str, default=None)
     group.add_argument("--overfit_frame", action='store_true')
     group.add_argument("--train_batches", type=int, default=None)
     group.add_argument("--val_batches", type=int, default=None)
-    group.add_argument("--val_repeat", type=int, default=1)
+    group.add_argument("--val_repeat", type=int, default=25)
     group.add_argument("--inference_batches", type=int, default=0)
-    group.add_argument("--batch_size", type=int, default=8)
+    group.add_argument("--batch_size", type=int, default=1)
     group.add_argument("--val_freq", type=int, default=None)
     group.add_argument("--val_epoch_freq", type=int, default=1)
     group.add_argument("--no_validate", action='store_true')
@@ -29,7 +29,7 @@ def parse_train_args():
     ## Logging args
     group = parser.add_argument_group("Logging settings")
     group.add_argument("--print_freq", type=int, default=100)
-    group.add_argument("--ckpt_freq", type=int, default=1)
+    group.add_argument("--ckpt_freq", type=int, default=40)
     group.add_argument("--wandb", action="store_true")
     group.add_argument("--run_name", type=str, default="default")
     
@@ -51,7 +51,7 @@ def parse_train_args():
     group.add_argument('--train_split', type=str, default="splits/4AA_test.csv")
     group.add_argument('--val_split', type=str, default="splits/4AA_test.csv")
     group.add_argument('--data_dir', type=str, default=None, required=True)
-    group.add_argument('--num_frames', type=int, default=50)
+    group.add_argument('--num_frames', type=int, default=100)
     group.add_argument('--crop', type=int, default=256)
     group.add_argument('--suffix', type=str, default='')
     group.add_argument('--atlas', action='store_true')
@@ -117,17 +117,16 @@ def parse_train_args():
     group.add_argument('--inpainting', action='store_true')
     group.add_argument('--dynamic_mpnn', action='store_true')
     group.add_argument('--mpnn', action='store_true')
-    group.add_argument('--frame_interval', type=int, default=None)
+    group.add_argument('--frame_interval', type=int, default=1)
     group.add_argument('--cond_interval', type=int, default=None) # for superresolution
     
     ## Equivariant Transformer settings
-    group.add_argument('--num_species', type=int, default=3)
+    group.add_argument('--num_species', type=int, default=5)
     group.add_argument('--edge_dim', type=int, default=64)
     group.add_argument('--num_convs', type=int, default=5)
-    group.add_argument('--node_dim', type=int, default=64)
     group.add_argument('--num_heads', type=int, default=4)
     group.add_argument('--ff_dim', type=int, default=64)
-    group.add_argument('--cutoff', type=float, default=6.0)
+    group.add_argument('--cutoff', type=float, default=2.5)
     
     args = parser.parse_args()
     os.environ["MODEL_DIR"] = os.path.join("workdir", args.run_name)

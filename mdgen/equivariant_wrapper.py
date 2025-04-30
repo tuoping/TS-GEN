@@ -6,6 +6,8 @@ logger = get_logger(__name__)
 import torch, time
 from torch import nn
 import copy
+import numpy as np
+from functools import partial
 
 from .model.equivariant_latent_model import EquivariantTransformer_dpm, Encoder_dpm, Processor, Decoder
 from .wrapper import Wrapper
@@ -26,7 +28,7 @@ class EquivariantMDGenWrapper(Wrapper):
         
         num_species = args.num_species
         if args.design:
-            num_scalar_out = 20
+            num_scalar_out = 5
         else:
             num_scalar_out = 0
             
@@ -55,48 +57,18 @@ class EquivariantMDGenWrapper(Wrapper):
                 model=self.model, decay=args.ema_decay
             )
             self.cached_weights = None
-    '''
-    def _prep_batch_latentgraph(self, batch):
-        species = batch["species"]
-        edge_index = batch["edge_index"]
-        edge_attr = batch["edge_attr"]
 
-        latents = torch.cat([edge_index, edge_attr], -1)
-        
-        B, T, L, num_elem = species.shape
-        h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,L,1)
-        v_loss_mask = batch["v_mask"].reshape(B,L,3)
-        loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
-        loss_mask = loss_mask.unsqueeze(1).expand(-1, T, -1, -1)
-
-        B, T, D, _ = latents.shape
-        assert _ == 6, f"latents shape should be (B, T, D, 4), but got {latents.shape}"
-        ########
-        cond_mask = torch.zeros(B, T, D, dtype=int, device=species.device)
-        if self.args.sim_condition:
-            cond_mask[:, 0] = 1
-        if self.args.cond_interval:
-            cond_mask[:, ::self.args.cond_interval] = 1
-        return {
-            "species": species,
-            "latents": latents,
-            'loss_mask': loss_mask,
-            'model_kwargs': {
-                "aatype": species,
-                'x_cond': torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
-                'x_cond_mask': cond_mask,
-            }
-        }
-    '''
 
     def prep_batch(self, batch):
         species = batch["species"]
-        latents = batch["x"]
+        latents = batch["disp"]
+        x_now = batch["x"]
     
         B, T, L, num_elem = species.shape
+        # print("batch dim = ", B,T,L)
         v_loss_mask = batch["v_mask"].reshape(B,L,3)
         if self.args.design:
-            h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,L,20)
+            h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,L,5)
             loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
         else:
             loss_mask = v_loss_mask
@@ -119,7 +91,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 "aatype": species,
                 "cell": batch["cell"],
                 "num_atoms": batch["num_atoms"],
-                'x_cond': torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
+                'x_cond': torch.where(cond_mask.unsqueeze(-1).bool(), x_now, 0.0),
                 'x_cond_mask': cond_mask,
             }
         }
@@ -148,3 +120,42 @@ class EquivariantMDGenWrapper(Wrapper):
         self.log('general_step_dur', time.time() - start1)
         self.last_log_time = time.time()
         return loss.mean()
+
+
+    def inference(self, batch):
+
+        prep = self.prep_batch(batch)
+
+        latents = prep['latents']
+        B, T, N, D = latents.shape
+
+        if self.args.design:
+            raise NotImplementedError
+            zs_continuous = torch.randn(B, T, L, self.latent_dim - 5, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, L, 5, device=latents.device)).sample()
+            zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
+            zs = torch.cat([zs_continuous, zs_discrete], -1)
+        else:
+            zs = torch.randn(B, T, N, D, device=self.device)
+
+        sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)
+        # num_steps=self.args.inference_steps)  # default to ode
+
+        samples = sample_fn(
+            zs,
+            partial(self.model.forward_inference, **prep['model_kwargs'])
+        )[-1]
+        
+        if self.args.design:
+            raise NotImplementedError
+            vector_out = samples[..., :-5]
+            logits = samples[..., -5:]
+        else:
+            vector_out = samples
+
+        if self.args.design:
+            raise NotImplementedError
+            aa_out = torch.argmax(logits, -1)
+        else:
+            aa_out = batch['species']
+        return vector_out, aa_out
