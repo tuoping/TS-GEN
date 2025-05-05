@@ -45,54 +45,6 @@ def readlog(dir, trainlosskeyword="train_loss", exclude_epochs=exclude_epochs):
                         alltrainlosses_baseline.append(float(l[idx_t+1].replace(",","").replace("np.float64(","").replace(")","")))
     return alltrainlosses_baseline, alltrainsteps_baseline
 
-def plot_3losses(dir_dir_b1024, k2 = "train_RCLoss", k3 = "train_eneergy_mseloss", after_epoch=None, before_epoch=None):
-    after_idx = 0
-    before_idx = None
-    plt.rcParams["figure.figsize"] = (17,5)
-    fig = plt.figure()
-    alltrainlosses_dir_b1024, alltrainsteps_dir_b1024 = readlog(dir_dir_b1024, trainlosskeyword="train_CELoss")
-    np.save("CELoss", np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
-    if len(alltrainlosses_dir_b1024) != 0:
-        if after_epoch is not None and after_epoch != "None":
-            after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][-1]
-            print("after_idx = ", after_idx)
-        if before_epoch is not None and before_epoch != "None":
-            before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][-1]
-            print("before_idx = ", before_idx)
-        
-        plt.subplot(131)
-        plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx]), alltrainlosses_dir_b1024[after_idx:before_idx])
-        plt.semilogy()
-        setfigform_simple("epoch","CE loss")
-    
-    alltrainlosses_dir_b1024, alltrainsteps_dir_b1024, allvallosses_dir_b1024, allvalsteps_dir_b1024 = readlog(dir_dir_b1024, trainlosskeyword=k2)
-    np.save(k2, np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
-    if len(np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0]) != 0:
-        if after_epoch is not None and after_epoch != "None":
-            after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][-1]
-        if before_epoch is not None and before_epoch != "None":
-            before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][-1]
-        plt.subplot(132)
-        plt.scatter(np.array(alltrainsteps_dir_b1024)[after_idx:before_idx], alltrainlosses_dir_b1024[after_idx:before_idx])
-        plt.semilogy()
-        setfigform_simple("epoch",k2)
-    
-    alltrainlosses_dir_b1024, alltrainsteps_dir_b1024, allvallosses_dir_b1024, allvalsteps_dir_b1024 = readlog(dir_dir_b1024, trainlosskeyword=k3)
-    np.save(k3, np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
-    if len(np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0]) != 0:
-        if after_epoch is not None and after_epoch != "None":
-            after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][-1]
-        if before_epoch is not None and before_epoch != "None":
-            before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][-1]
-        plt.subplot(133)
-        plt.scatter(np.array(alltrainsteps_dir_b1024)[after_idx:before_idx], alltrainlosses_dir_b1024[after_idx:before_idx])
-        plt.semilogy()
-        setfigform_simple("epoch",k3)
-    # plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    # plt.legend(fontsize=font["size"]-4)
-    fig.tight_layout()
-    plt.savefig(os.path.join(dir_dir_b1024, "losses"), bbox_inches="tight")
-    plt.show()
 
 def plot_1losses(dir_dir_b1024, key="train_loss", after_epoch=None, before_epoch=None):
     plt.rcParams["figure.figsize"] = (6,5)
@@ -109,9 +61,19 @@ def plot_1losses(dir_dir_b1024, key="train_loss", after_epoch=None, before_epoch
         
         
     # plt.subplot(121)
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch]), alltrainlosses_dir_b1024[after_idx:before_epoch])
-    plt.semilogy()
+    positive_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])>0)[0]
+    negative_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])<=0)[0]
+    print(positive_idx)
+    print(negative_idx)
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[positive_idx], np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[positive_idx], label="$L>0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[negative_idx], -np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[negative_idx], c="r", label="$L<0$", marker="x")
+    if len(positive_idx) > 0:
+        plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[positive_idx][-1], ls="--")
+    if len(negative_idx) > 0:
+        plt.axhline(-np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[negative_idx][-1], ls="--", c="r")
+    # plt.semilogy()
     setfigform_simple("epoch","loss")
+    plt.legend()
     plt.title(dir_dir_b1024, fontdict=font)
     
     fig.tight_layout()

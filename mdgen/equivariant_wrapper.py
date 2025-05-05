@@ -61,19 +61,19 @@ class EquivariantMDGenWrapper(Wrapper):
 
     def prep_batch(self, batch):
         species = batch["species"]
-        latents = batch["disp"]
+        latents = batch["x_next"]
         x_now = batch["x"]
+        
     
         B, T, L, num_elem = species.shape
-        # print("batch dim = ", B,T,L)
-        v_loss_mask = batch["v_mask"].reshape(B,L,3)
+
+        v_loss_mask = batch["v_mask"]
         if self.args.design:
-            h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,L,5)
+            h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,T,L,5)
             loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
         else:
             loss_mask = v_loss_mask
-        
-        loss_mask = loss_mask.unsqueeze(1).expand(-1, T, -1, -1)
+
 
         B, T, L, _ = latents.shape
         assert _ == 3, f"latents shape should be (B, T, D, 3), but got {latents.shape}"
@@ -101,6 +101,7 @@ class EquivariantMDGenWrapper(Wrapper):
         self.stage = stage
         start1 = time.time()
         prep = self.prep_batch(batch)
+    
         start = time.time()
         out_dict = self.transport.training_losses(
             model=self.model,

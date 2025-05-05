@@ -137,6 +137,8 @@ from ase.geometry.geometry import get_distances
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __init__(self, traj_dirname, cutoff, num_frames=None, stage="train"):
+        temperature = 300
+        self.kT = temperature*8.617*10**-5
         self.max_num_edges = 4000
         self.cutoff = cutoff
         self.traj_filenames = []
@@ -163,7 +165,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.traj_filenames)
     
-    def __getitem__(self, idx, random_starting_point=False):
+    def __getitem__(self, idx, random_starting_point=True):
         idx = idx % len(self.traj_filenames)
         if self.stage == "save":
             atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
@@ -211,31 +213,36 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             ase.io.write(f"data/CrCoNi_data_posdisp/initial-{idx}.xyz", atoms_list[0])
             return len(dataset)
         else:
-            dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+            _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
             if random_starting_point:
-                start_i_traj = np.random.randint(0, len(dataset), 1)[0]
+                start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames, 1)[0]
             else:
                 start_i_traj = 0
             if self.num_frames is None:
                 self.num_frames = len(dataset)
-            end_i_traj = min(start_i_traj+self.num_frames, len(dataset))
+            end_i_traj = start_i_traj+self.num_frames
 
+            dataset = _dataset[start_i_traj:end_i_traj]
+            dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
             num_atoms = dataset[0].num_atoms
-            mask = torch.ones((num_atoms,), dtype=torch.float32)
-            v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)   
 
-            dataset = dataset[start_i_traj:end_i_traj]
+            # TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
+            # LSS_reward = torch.stack([data.E_now-data.E_next for data in dataset]) # T
+
+            # non_moving_mask = (disp.norm(dim=-1) < 0.01).float() # T,L
+            # mask = non_moving_mask * torch.exp(torch.tensor(-10.)) + (1-non_moving_mask)*torch.exp(TKS_reward)[:,None] # T,L
+            # v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+            mask = np.ones([len(dataset), num_atoms])
+            v_mask = np.ones([len(dataset), num_atoms, 3])
+
+            
             return {
                 "name": "CrCoNi",
                 "species": torch.stack([data.z for data in dataset]),
                 "x": torch.stack([data.pos for data in dataset]),
                 "cell": torch.stack([data.cell for data in dataset]),
                 "num_atoms": torch.stack([data.num_atoms for data in dataset]),
-                "freq": torch.stack([data.freq for data in dataset]),
-                "E_barrier": torch.stack([data.E_barrier for data in dataset]),
-                "E_now": torch.stack([data.E_now for data in dataset]),
-                "E_next": torch.stack([data.E_next for data in dataset]),
-                "disp": torch.stack([data.disp for data in dataset]),
+                "x_next": torch.stack([data.pos for data in dataset_next]),
                 "mask": mask,
                 "v_mask": v_mask
             }

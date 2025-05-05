@@ -9,6 +9,20 @@ from mdgen.equivariant_wrapper import EquivariantMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 import pytorch_lightning as pl
 
+class ResetLrCallback(pl.Callback):
+    def __init__(self, new_lr: float):
+        self.new_lr = new_lr
+
+    # runs right after checkpoint restore, before the first batch
+    def on_train_epoch_start(self, trainer, pl_module):
+        for optimizer in trainer.optimizers:
+            for pg in optimizer.param_groups:
+                pg["lr"] = self.new_lr
+        ## (optional) reset schedulers if you wish
+        # for scheduler in trainer.lr_schedulers:
+        #     scheduler["scheduler"].base_lrs = [self.new_lr]
+        #     scheduler["scheduler"].last_epoch = -1  # starts fresh
+
 
 torch.set_float32_matmul_precision('medium')
 
@@ -47,12 +61,14 @@ trainer = pl.Trainer(
     gradient_clip_val=args.grad_clip,
     default_root_dir=os.environ["MODEL_DIR"], 
     callbacks=[
+        ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=-1,
             every_n_epochs=args.ckpt_freq,
         ),
         ModelSummary(max_depth=2),
+        
     ],
     accumulate_grad_batches=args.accumulate_grad,
     val_check_interval=args.val_freq,

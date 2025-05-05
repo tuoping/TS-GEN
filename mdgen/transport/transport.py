@@ -186,7 +186,8 @@ class Transport:
         terms['pred'] = model_output
         if not (self.args.dynamic_mpnn or self.args.mpnn):
             if self.model_type == ModelType.VELOCITY:
-                terms['loss'] = mean_flat(((model_output - ut) ** 2), mask)
+                # terms['loss'] = mean_flat(((model_output - ut) ** 2), mask)
+                terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask) # regression based loss
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
