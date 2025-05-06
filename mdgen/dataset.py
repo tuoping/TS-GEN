@@ -127,6 +127,8 @@ def remove_element(atoms, element=[]):
             new_atomic_numbers[i] = 2
         elif atomic_numbers[i]==28:
             new_atomic_numbers[i] = 3
+        elif atomic_numbers[i]==18:
+            new_atomic_numbers[i] = 4
         else:
             raise Exception("Unrecognized type", atomic_numbers[i])
     atoms.set_atomic_numbers(new_atomic_numbers)
@@ -207,10 +209,10 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
                 )
                 dataset.append(data.clone())
-            if not os.path.exists("data/CrCoNi_data_posdisp/"):
-                os.makedirs("data/CrCoNi_data_posdisp/")
-            torch.save(dataset, f'data/CrCoNi_data_posdisp/dataset-{idx}.pt')
-            ase.io.write(f"data/CrCoNi_data_posdisp/initial-{idx}.xyz", atoms_list[0])
+            if not os.path.exists("data/alchem_CrCoNi_data/"):
+                os.makedirs("data/alchem_CrCoNi_data/")
+            torch.save(dataset, f'data/alchem_CrCoNi_data/dataset-{idx}.pt')
+            ase.io.write(f"data/alchem_CrCoNi_data/initial-{idx}.xyz", atoms_list[0])
             return len(dataset)
         else:
             _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
@@ -232,13 +234,14 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             # non_moving_mask = (disp.norm(dim=-1) < 0.01).float() # T,L
             # mask = non_moving_mask * torch.exp(torch.tensor(-10.)) + (1-non_moving_mask)*torch.exp(TKS_reward)[:,None] # T,L
             # v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
-            mask = np.ones([len(dataset), num_atoms])
+            mask = np.ones([len(dataset), num_atoms, 5])
             v_mask = np.ones([len(dataset), num_atoms, 3])
 
             
             return {
                 "name": "CrCoNi",
                 "species": torch.stack([data.z for data in dataset]),
+                "species_next": torch.stack([data.z for data in dataset_next]),
                 "x": torch.stack([data.pos for data in dataset]),
                 "cell": torch.stack([data.cell for data in dataset]),
                 "num_atoms": torch.stack([data.num_atoms for data in dataset]),
@@ -246,8 +249,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 "mask": mask,
                 "v_mask": v_mask
             }
-
-            
+         
         
 
 class GemnetDataset_CrCoNi(torch.utils.data.Dataset):

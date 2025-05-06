@@ -82,5 +82,6 @@ class GaussianRandomFourierFeatures(nn.Module):
         self.register_buffer('B', torch.randn(input_dim, embed_dim//2) * sigma)
 
     def forward(self, v: Tensor) -> Tensor:
-        v_proj =  2 * torch.pi * v @ self.B
+        L = v.shape[0]
+        v_proj =  2 * torch.pi * v @ self.B[:L]
         return torch.cat([torch.cos(v_proj), torch.sin(v_proj)], dim=-1)

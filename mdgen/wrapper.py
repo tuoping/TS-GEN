@@ -169,23 +169,21 @@ class Wrapper(pl.LightningModule):
         optimizer = cls(
             filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
         )
-        return optimizer
+        # return optimizer
 
-        # # Add ReduceLROnPlateau scheduler
-        # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        #     optimizer,
-        #     mode='min',                  # or 'max' depending on your metric
-        #     factor=0.1,                  # decay factor
-        #     patience=10,                 # epochs to wait before decaying
-        #     verbose=True
-        # )
-        # return {
-        #     'optimizer': optimizer,
-        #     'lr_scheduler': {
-        #         'scheduler': scheduler,
-        #         'monitor': 'val_loss'    # metric to monitor
-        #     }
-        # }
+        # Add ReduceLROnPlateau scheduler
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=1,
+            gamma=0.99
+        )
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_loss'    # metric to monitor
+            }
+        }
 
 
 class NewMDGenWrapper(Wrapper):

@@ -61,7 +61,7 @@ trainer = pl.Trainer(
     gradient_clip_val=args.grad_clip,
     default_root_dir=os.environ["MODEL_DIR"], 
     callbacks=[
-        ResetLrCallback(args.lr),
+        # ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=-1,

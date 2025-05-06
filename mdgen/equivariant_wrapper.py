@@ -29,15 +29,17 @@ class EquivariantMDGenWrapper(Wrapper):
         num_species = args.num_species
         if args.design:
             num_scalar_out = 5
+            latent_dim = 5
         else:
             num_scalar_out = 0
+            latent_dim = 3
             
         self.model = EquivariantTransformer_dpm(
-            encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim),
+            encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=args.batch_size),
             processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim),
             decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=1),
             cutoff=args.cutoff,
-            latent_dim=3,
+            latent_dim=latent_dim,
             embed_dim=args.embed_dim,
             design=args.design,
         )
@@ -58,8 +60,52 @@ class EquivariantMDGenWrapper(Wrapper):
             )
             self.cached_weights = None
 
-
     def prep_batch(self, batch):
+        if self.args.design:
+            return self.prep_batch_species(batch)
+        else:
+            return self.prep_batch_x(batch)
+
+    def prep_batch_species(self, batch):
+        species = batch["species"]
+        latents = batch["species_next"]
+        x_now = batch["x"]
+        
+    
+        B, T, L, num_elem = species.shape
+
+        v_loss_mask = batch["v_mask"]
+        if self.args.design:
+            h_loss_mask = batch["mask"].unsqueeze(-1).reshape(B,T,L,5)
+            # loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
+            loss_mask = h_loss_mask
+        else:
+            loss_mask = v_loss_mask
+
+
+        B, T, L, _ = latents.shape
+        assert _ == 5, f"latents shape should be (B, T, D, 5), but got {latents.shape}"
+        ########
+        cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
+        if self.args.sim_condition:
+            cond_mask[:, 0] = 1
+        if self.args.cond_interval:
+            cond_mask[:, ::self.args.cond_interval] = 1
+        return {
+            "species": latents,
+            "latents": latents,
+            'loss_mask': loss_mask,
+            'model_kwargs': {
+                "cell": batch["cell"],
+                "num_atoms": batch["num_atoms"],
+                'x_cond': torch.where(cond_mask.unsqueeze(-1).bool(), species, 0.0),
+                'x_cond_mask': cond_mask,
+                "aatype": None,
+                "x_latt": x_now,
+            }
+        }
+
+    def prep_batch_x(self, batch):
         species = batch["species"]
         latents = batch["x_next"]
         x_now = batch["x"]
@@ -131,11 +177,21 @@ class EquivariantMDGenWrapper(Wrapper):
         B, T, N, D = latents.shape
 
         if self.args.design:
-            raise NotImplementedError
-            zs_continuous = torch.randn(B, T, L, self.latent_dim - 5, device=latents.device)
-            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, L, 5, device=latents.device)).sample()
+            # zs_continuous = torch.randn(B, T, N, self.latent_dim - 5, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, 5, device=latents.device)).sample()
             zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
-            zs = torch.cat([zs_continuous, zs_discrete], -1)
+            # zs = torch.cat([zs_continuous, zs_discrete], -1)
+            zs = zs_discrete
+
+            x1 = prep['latents']
+            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], 20, device=self.device)
+            xt = torch.cat([x1, x_d], dim=-1)
+            logits = self.model.forward_inference(xt, torch.ones(B, device=self.device),
+                                                  **prep['model_kwargs'])
+            aa_out = torch.argmax(logits, -1)
+            # aa_out = logits
+            vector_out = prep["model_kwargs"]["x_latt"]
+            return vector_out, aa_out
         else:
             zs = torch.randn(B, T, N, D, device=self.device)
 
@@ -148,15 +204,16 @@ class EquivariantMDGenWrapper(Wrapper):
         )[-1]
         
         if self.args.design:
-            raise NotImplementedError
-            vector_out = samples[..., :-5]
+            # vector_out = samples[..., :-5]
+            vector_out = prep["model_kwargs"]["x_now"]
             logits = samples[..., -5:]
         else:
             vector_out = samples
 
         if self.args.design:
-            raise NotImplementedError
             aa_out = torch.argmax(logits, -1)
+            # aa_out = logits
         else:
-            aa_out = batch['species']
+            aa_out = torch.argmax(batch['species'], -1)
+            # aa_out = batch['species']
         return vector_out, aa_out

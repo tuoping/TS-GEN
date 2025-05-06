@@ -48,10 +48,10 @@ class Encoder(nn.Module):
 
 
 class Encoder_dpm(Encoder):
-    def __init__(self, num_species: int, node_dim: int, init_edge_dim: int, edge_dim: int) -> None:
+    def __init__(self, num_species: int, node_dim: int, init_edge_dim: int, edge_dim: int, input_dim: int) -> None:
         super().__init__(num_species, node_dim, init_edge_dim, edge_dim)
         self.embed_time = nn.Sequential(
-            GaussianRandomFourierFeatures(node_dim, input_dim=1),
+            GaussianRandomFourierFeatures(node_dim, input_dim=input_dim),
             MLP([node_dim, node_dim, node_dim], act=nn.SiLU()),
         )
 
@@ -146,7 +146,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         self.max_cell_images_per_dim = 5
 
         cond_dim = latent_dim
-        if self.design: cond_dim -= 5
+        self.cond_dim = cond_dim
         self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
         self.mask_to_emb = nn.Embedding(2, embed_dim)
 
@@ -157,7 +157,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return self.decoder(h, v)
     
-    def forward(self, x: Tensor, t: Tensor, 
+    def inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 x_cond=None, x_cond_mask=None, 
@@ -200,19 +200,37 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
             
         
-        scaler_out, vector_out = self._graph_forward(species, edge_index, edge_attr, edge_vec, t, x_cond=x_cond.view(-1,3), x_cond_mask=x_cond_mask.view(-1))
+        scaler_out, vector_out = self._graph_forward(species, edge_index, edge_attr, edge_vec, t, x_cond=x_cond.view(-1,self.cond_dim), x_cond_mask=x_cond_mask.view(-1))
         if self.design:
-            return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
+            # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
+            return scaler_out.view(B, T, N, -1)
         else:
             return vector_out.view(B, T, N, -1)
         
+    def forward(self, x: Tensor, t: Tensor, 
+                cell=None, 
+                num_atoms=None,
+                x_cond=None, x_cond_mask=None, 
+                aatype=None, x_latt=None):
+        if self.design:
+            x_ = x_latt
+            aatype_ = x
+            scaler_out = self.inference(x_, t, cell, num_atoms, x_cond, x_cond_mask, aatype_)
+            return scaler_out
+        else:
+            vector_out = self.inference(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
+            return vector_out
+
     def forward_inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 x_cond=None, x_cond_mask=None, 
-                aatype=None):
+                aatype=None, x_latt=None):
         if self.design:
-            raise NotImplementedError
+            x_ = x_latt
+            aatype_ = x
+            scaler_out = self.inference(x_, t, cell, num_atoms, x_cond, x_cond_mask, aatype_)
+            return scaler_out
         else:
-            vector_out = self.forward(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
+            vector_out = self.inference(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
             return vector_out

@@ -152,39 +152,41 @@ class Transport:
 
         if model_kwargs == None:
             model_kwargs = {}
-
+        
+        ### normal sampler of t
         t, x0, x1 = self.sample(x1)
-        t, xt, ut = self.path_sampler.plan(t, x0, x1)
-
-
-
+        # t, xt, ut = self.path_sampler.plan(t, x0, x1)
         if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
             assert self.model_type == ModelType.VELOCITY
-            if self.args.dynamic_mpnn or self.args.mpnn:
-                t = torch.ones_like(t, device=t.device)
-                x_d = torch.zeros(xt.shape[0], xt.shape[2], 5, device=xt.device)
-            else:
-                seq_one_hot = th.nn.functional.one_hot(aatype1, num_classes=5)
-                alphas, _ = t_to_alpha(t, self.args)
-                alphas = 1 + seq_one_hot * (alphas[:, None, None] - 1)
-                x_d = th.distributions.Dirichlet(alphas).sample()
-            x_d = x_d[:, None, :, :].expand(-1, xt.shape[1], -1, -1)
-            xt = th.cat([xt, x_d], dim=-1)
+            seq_one_hot = aatype1
+            ### exponential sampler of t
+            # exponential_dist = torch.distributions.Exponential(1.0)
+            # t = exponential_dist.sample((seq_one_hot.shape[0],)).to(seq_one_hot.device).float()
+            alphas, _ = t_to_alpha(t, self.args)
+            alphas = torch.ones_like(seq_one_hot) + seq_one_hot * (alphas[:, None, None, None] - torch.ones_like(seq_one_hot))
+            x_d = th.distributions.Dirichlet(alphas).sample()
+            xt = x_d
 
+            # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
+        else:
+            # t, x0, x1 = self.sample(x1)
+            t, xt, ut = self.path_sampler.plan(t, x0, x1)
+        
+        B = x1.shape[0]
+        assert t.shape == (B,)
         model_output = model(xt, t, **model_kwargs)
+            
         B, *_, C = xt.shape
-        if not (self.args.dynamic_mpnn or self.args.mpnn):
-            assert model_output.size() == (B, *xt.size()[1:-1], C)
+        assert model_output.size() == (B, *xt.size()[1:-1], C)
 
         if self.args.design:
-            if not (self.args.dynamic_mpnn or self.args.mpnn):
-                logits = model_output[:, :, :, -5:]
-                model_output = model_output[:, :, :, :-5]
+            logits = model_output[:, :, :, -5:]
+            model_output = model_output[:, :, :, :-5]
 
         terms = {}
         terms['t'] = t
         terms['pred'] = model_output
-        if not (self.args.dynamic_mpnn or self.args.mpnn):
+        if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
                 # terms['loss'] = mean_flat(((model_output - ut) ** 2), mask)
                 terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask) # regression based loss
@@ -208,16 +210,10 @@ class Transport:
         # more changes for dirichlet flow matching
 
         if self.args.design:
-            if self.args.dynamic_mpnn or self.args.mpnn:
-                logits = model_output
-                terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
-                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.reshape(-1))
-                terms['loss'] = loss_d
-            else:
-                terms['loss_continuous'] = terms['loss']
-                seq_expanded = aatype1[:, None, :].expand(-1, xt.shape[1], -1)
-                loss_d = th.nn.functional.cross_entropy(logits.reshape(-1, 5), seq_expanded.reshape(-1))
-                terms['loss'] = loss_d * self.args.discrete_loss_weight + (1 - self.args.discrete_loss_weight) * terms['loss']
+            terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
+            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.argmax(dim=-1).reshape(-1))
+            # loss_d = th.nn.functional.nll_loss(logits.view(-1,5), aatype1.view(-1,5))
+            terms['loss'] = loss_d
             terms['loss_discrete'] = loss_d
             terms['logits'] = logits
 
