@@ -108,9 +108,13 @@ class Decoder(nn.Module):
         h_ = h @ self.Oh
         v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
         # return h_out, v_out.squeeze()
-        h_out_1 = h_[:,:-5]
-        h_out_2 = torch.nn.functional.softmax(h_[:,-5:], dim=1)
-        return torch.hstack([h_out_1, h_out_2]), v_out.squeeze()
+        if h_.shape[-1] >= 5:
+            h_out_1 = h_[:,:-5]
+            h_out_2 = torch.nn.functional.softmax(h_[:,-5:], dim=1)
+            return torch.hstack([h_out_1, h_out_2]), v_out.squeeze()
+        else:
+            return h_, v_out.squeeze()
+        
 
     def extra_repr(self) -> str:
         return f'(Oh): tensor({list(self.Oh.shape)}, requires_grad={self.Oh.requires_grad}) \n' \
@@ -137,30 +141,42 @@ from .utils.data_utils import (
     radius_graph_pbc,
 )
 class EquivariantTransformer_dpm(EquivariantTransformer):
-    def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False):
+    def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False, potential_model=False):
         super().__init__(encoder, processor, decoder)
         self.cutoff = cutoff
         self.otf_graph = otf_graph
         self.design = design
+        self.potential_model = potential_model
         self.max_num_neighbors_threshold = 50
         self.max_cell_images_per_dim = 5
 
         cond_dim = latent_dim
         self.cond_dim = cond_dim
         self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
-        self.mask_to_emb = nn.Embedding(2, embed_dim)
+        self.mask_to_emb = nn.Embedding(cond_dim, embed_dim)
 
-    def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, x_cond=None, x_cond_mask=None,) -> Tuple[Tensor, Tensor]:
+    def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, out_cond=None,) -> Tuple[Tensor, Tensor]:
         h, v, edge_attr = self.encoder(species, edge_index, edge_attr, edge_vec, t)
-        if x_cond is not None:
-            h = h + self.cond_to_emb(x_cond) + self.mask_to_emb(x_cond_mask)  # token has cond g, tau
+        if out_cond is not None:
+            # edge_index_cond = out_cond["edge_index"]
+            # edge_len_cond = out_cond["distances"]
+            # edge_vec_cond = out_cond["distance_vec"]
+            # edge_attr_cond = torch.hstack([edge_vec_cond, edge_len_cond.view(-1, 1)])
+            # species_cond = out_cond["species"]
+            # h_cond, v_cond, edge_attr_cond = self.encoder(
+            #     species_cond.view(-1,5), 
+            #     edge_index_cond, edge_attr_cond, edge_vec_cond, 
+            #     torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
+            #     )
+            # h = h + self.cond_to_emb(h_cond)*(out_cond["mask"].reshape(-1,1)) # + self.mask_to_emb(out_cond["mask"])
+            h = h + self.cond_to_emb(out_cond["x"]) + self.mask_to_emb(out_cond["mask"])
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return self.decoder(h, v)
     
     def inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
-                x_cond=None, x_cond_mask=None, 
+                conditions=None, 
                 aatype=None):
         assert cell is not None
         B, T, N, _ = x.shape
@@ -174,6 +190,15 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 max_num_neighbors_threshold=self.max_num_neighbors_threshold,
                 max_cell_images_per_dim=self.max_cell_images_per_dim,
             )
+            # if conditions is not None:
+            #     self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
+            #         cart_coords=conditions["x"].view(-1, 3),
+            #         lattice=conditions["cell"].view(-1, 3, 3),
+            #         num_atoms=conditions["num_atoms"].view(-1),
+            #         radius=self.cutoff,
+            #         max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+            #         max_cell_images_per_dim=self.max_cell_images_per_dim,
+            #     )
             # self.otf_graph = False
 
         out = get_pbc_distances(
@@ -187,21 +212,35 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             return_offsets=True,
             return_distance_vec=True,
         )
-
+        # if conditions is not None:
+        #     out_cond = get_pbc_distances(
+        #         conditions["x"].view(-1, 3),
+        #         self.edge_index_cond,
+        #         conditions["cell"].view(-1, 3, 3),
+        #         self.to_jimages_cond,
+        #         conditions["num_atoms"].view(-1),
+        #         self.num_bonds_cond,
+        #         coord_is_cart=True,
+        #         return_offsets=True,
+        #         return_distance_vec=True,
+        #     )
+        #     out_cond["species"] = conditions["species"]
+        #     out_cond["mask"] = conditions["mask"]
         edge_index = out["edge_index"]
         edge_len = out["distances"]
         edge_vec = out["distance_vec"]
         edge_attr = torch.hstack([edge_vec, edge_len.view(-1, 1)])
 
+        t = t.unsqueeze(-1).unsqueeze(1).expand(-1,T,-1).unsqueeze(2).expand(-1,-1,N,-1)
         if aatype is not None:
-            species = aatype.view(-1,5)
+            species = aatype
         else:
-            aatype = torch.zeros([N], dtype=torch.long, device=x.device)
+            aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
             species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
             
         
-        scaler_out, vector_out = self._graph_forward(species, edge_index, edge_attr, edge_vec, t, x_cond=x_cond.view(-1,self.cond_dim), x_cond_mask=x_cond_mask.view(-1))
-        if self.design:
+        scaler_out, vector_out = self._graph_forward(species.reshape(-1,5), edge_index, edge_attr, edge_vec, t.reshape(-1,1), conditions)
+        if self.design or self.potential_model:
             # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
             return scaler_out.view(B, T, N, -1)
         else:
@@ -210,27 +249,27 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
     def forward(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
-                x_cond=None, x_cond_mask=None, 
+                conditions=None,
                 aatype=None, x_latt=None):
         if self.design:
             x_ = x_latt
             aatype_ = x
-            scaler_out = self.inference(x_, t, cell, num_atoms, x_cond, x_cond_mask, aatype_)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
             return scaler_out
         else:
-            vector_out = self.inference(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
+            vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
             return vector_out
 
     def forward_inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
-                x_cond=None, x_cond_mask=None, 
+                conditions=None,
                 aatype=None, x_latt=None):
         if self.design:
             x_ = x_latt
             aatype_ = x
-            scaler_out = self.inference(x_, t, cell, num_atoms, x_cond, x_cond_mask, aatype_)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
             return scaler_out
         else:
-            vector_out = self.inference(x, t, cell, num_atoms, x_cond, x_cond_mask, aatype)
+            vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
             return vector_out

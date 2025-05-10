@@ -71,7 +71,7 @@ def plot_1losses(dir_dir_b1024, key="train_loss", after_epoch=None, before_epoch
         plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[positive_idx][-1], ls="--")
     if len(negative_idx) > 0:
         plt.axhline(-np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[negative_idx][-1], ls="--", c="r")
-    # plt.semilogy()
+    plt.semilogy()
     setfigform_simple("epoch","loss")
     plt.legend()
     plt.title(dir_dir_b1024, fontdict=font)

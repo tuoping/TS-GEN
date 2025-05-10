@@ -51,7 +51,7 @@ def parse_train_args():
     group.add_argument('--train_split', type=str, default="splits/4AA_test.csv")
     group.add_argument('--val_split', type=str, default="splits/4AA_test.csv")
     group.add_argument('--data_dir', type=str, default=None, required=True)
-    group.add_argument('--num_frames', type=int, default=100)
+    group.add_argument('--num_frames', type=int, default=1)
     group.add_argument('--crop', type=int, default=256)
     group.add_argument('--suffix', type=str, default='')
     group.add_argument('--atlas', action='store_true')
@@ -128,6 +128,10 @@ def parse_train_args():
     group.add_argument('--ff_dim', type=int, default=64)
     group.add_argument('--cutoff', type=float, default=2.5)
     
+    ## nonequil. simulation settings
+    # group.add_argument('--localmask', action='store_true')
+    group.add_argument('--potential_model', action='store_true')
+
     args = parser.parse_args()
     os.environ["MODEL_DIR"] = os.path.join("workdir", args.run_name)
 

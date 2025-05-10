@@ -135,27 +135,172 @@ def remove_element(atoms, element=[]):
     indices_to_remove = [i for i, n in enumerate(atoms.get_atomic_numbers()) if n in element]
     del atoms[indices_to_remove]
 
+
+from ase import Atoms
 from ase.geometry.geometry import get_distances
 
+def extract_positions_by_element(atoms, element_symbol):
+    """
+    Extracts the positions of atoms with a specific element symbol from an ASE Atoms object.
+
+    Parameters:
+    - atoms: ASE Atoms object
+    - element_symbol: Symbol of the element (e.g., 'O' for oxygen)
+
+    Returns:
+    - positions: Numpy array of shape (N, 3) with the positions of the selected element
+    """
+    # Extract indices of atoms with the specified element
+    element_indices = [i for i, atom in enumerate(atoms) if atom.symbol == element_symbol]
+
+    # Extract the positions of those atoms
+    positions = atoms.positions[element_indices]
+
+    return positions
+
+
+def calculate_rdf_pair(
+    positions_a, 
+    positions_b, 
+    volume, 
+    r_max, 
+    bin_width, 
+    cell=None, 
+    pbc=None
+):
+    """
+    Calculate the radial distribution function (RDF) between two sets
+    of particles (A and B) in a (possibly) periodic cubic box.
+
+    Parameters
+    ----------
+    positions_a : (N_a, 3) array_like
+        Coordinates of element A.
+    positions_b : (N_b, 3) array_like
+        Coordinates of element B.
+    volume : float
+        Volume of the simulation box (for normalization). Assumed cubic,
+        but only the volume is used here.
+    r_max : float
+        Maximum distance for the RDF calculation.
+    bin_width : float
+        Width of each RDF bin.
+    cell : array_like of shape (3,) or (3,3), optional
+        Box dimensions. If pbc is used, must provide either:
+          - (3,) for orthorhombic boxes
+          - (3,3) for full cell vectors
+    pbc : (3,) of bool, optional
+        Which directions are periodic (e.g., [True, True, True]).
+
+    Returns
+    -------
+    r_values : (num_bins,) ndarray
+        Midpoints of each radial bin.
+    g_r : (num_bins,) ndarray
+        The radial distribution function g(r).
+    integral_g_r : (num_bins,) ndarray
+        Cumulative coordination number up to distance r, normalized by
+        (number_density * number_of_A_particles).
+    """
+    # Convert to arrays
+    positions_a = np.asarray(positions_a)
+    positions_b = np.asarray(positions_b)
+
+    num_particles_a = len(positions_a)
+    num_particles_b = len(positions_b)
+
+    # Broadcast differences: shape => (N_a, N_b, 3)
+    dr = positions_a[:, None, :] - positions_b[None, :, :]
+
+    # If periodic boundary conditions are specified, apply minimal image convention
+    if pbc is not None and cell is not None:
+        # Handle the case of a (3,) cell (orthorhombic box)
+        # or a (3,3) cell (general triclinic box).
+        cell = np.asarray(cell)
+        
+        if cell.shape == (3,):  # Orthorhombic
+            for dim in range(3):
+                if pbc[dim]:
+                    length = cell[dim]
+                    dr[:, :, dim] -= length * np.round(dr[:, :, dim] / length)
+        elif cell.shape == (3, 3):  # Triclinic or general
+            # Solve for integer shifts n that minimize the distance in each dimension:
+            #   dr_corrected = dr - n * cell_vectors
+            # For an explanation, see references on minimal image in triclinic cells.
+            #
+            # A simple approximate approach is to project dr onto each cell vector,
+            # round, and subtract. For large systems, a fully robust approach may need
+            # more advanced logic. This snippet assumes cell is invertible:
+            inv_cell = np.linalg.inv(cell)
+            # Convert positions to fractional coords, round, shift back
+            frac_shift = np.round(dr @ inv_cell)
+            dr -= frac_shift @ cell
+        else:
+            raise ValueError("cell must be shape (3,) or (3,3) if pbc is provided.")
+
+    # Compute the Euclidean distances
+    distances = np.sqrt(np.sum(dr**2, axis=-1))
+
+    # Filter out zero-distances (if any) and distances beyond r_max
+    valid_mask = (distances > 0.0) & (distances < r_max)
+    distances = distances[valid_mask]
+
+    # Bin the distances
+    num_bins = int(np.ceil(r_max / bin_width))
+    rdf_hist, bin_edges = np.histogram(
+        distances, bins=num_bins, range=(0, r_max)
+    )
+    
+    # Radial bin centers (midpoints)
+    r_values = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    # Volume of spherical shells: shell_volume = 4/3 pi ( (r+dr)^3 - r^3 )
+    # We'll use bin_edges for a more accurate shell volume:
+    shell_volumes = (4.0 / 3.0) * np.pi * (bin_edges[1:]**3 - bin_edges[:-1]**3)
+
+    # Compute the "ideal" histogram = density * shell_volume * number_of_A
+    number_density = num_particles_b / volume  # number density of B
+    ideal_counts = shell_volumes * number_density * num_particles_a
+
+    # RDF is ratio of actual to ideal
+    g_r = rdf_hist / ideal_counts
+
+    # For cumulative coordination number (integral RDF):
+    # 1) compute cumulative sum of rdf_hist
+    cdf_hist = np.cumsum(rdf_hist)
+    # 2) at each bin i, total counts so far is cdf_hist[i]
+    # 3) normalize by ( number_density * num_particles_a )
+    integral_g_r = cdf_hist / (number_density * num_particles_a)
+
+    return r_values, g_r, integral_g_r
+
+
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
-    def __init__(self, traj_dirname, cutoff, num_frames=None, stage="train"):
+    def __init__(self, traj_dirname, cutoff, num_frames=None, localmask=False, stage="train"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         self.max_num_edges = 4000
         self.cutoff = cutoff
         self.traj_filenames = []
         self.traj_initial = []
+        self.traj_rdf = []
+        LSS_reward_pool = []
         for u1 in range(5):
             for k in range(100):
                 if stage == "train":
                     criterion = (k%3 <= 1)
                     if criterion:
                         self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                        self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
                         self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
+                        # _dataset = torch.load(self.traj_filenames[-1], weights_only=False)
+                        # LSS_reward_pool.append(torch.stack([data.E_now for data in _dataset]))
+
                 elif stage == "val":
                     criterion = (k%3 > 1)
                     if criterion:
                         self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                        self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
                         self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
                 elif stage == "save":
                     self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
@@ -163,11 +308,15 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     raise Exception(f"Wrong stage str {stage}")
         self.num_frames = num_frames
         self.stage = stage
+        self.localmask = False
+        # self.LSS_reward_pool = torch.concat(LSS_reward_pool, dim=0)
+        # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
     
     def __len__(self):
         return len(self.traj_filenames)
     
     def __getitem__(self, idx, random_starting_point=True):
+        # idx = idx % len(self.traj_filenames)
         idx = idx % len(self.traj_filenames)
         if self.stage == "save":
             atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
@@ -178,7 +327,13 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 if len(atoms) != num_atoms:
                     print("Traj filename", self.traj_filenames[idx])
                     raise Exception("Atoms length mismatch", len(atoms), num_atoms)
-
+            dataset_g_r= []
+            for atoms in atoms_list:
+                r_, g_r, integral_g_r = calculate_rdf_pair(atoms.positions, atoms.positions, atoms.get_volume(), self.cutoff, 0.1, cell=atoms.cell, pbc=True)
+                dataset_g_r.append(torch.from_numpy(np.stack([r_, g_r])))
+            torch.save(dataset_g_r, f'data/CrCoNi_data/RDF-{idx}.pt')
+            return len(dataset_g_r)
+            # return len(atoms_list)
             mask = torch.ones((num_atoms,), dtype=torch.float32)
             v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)               
 
@@ -209,13 +364,16 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
                 )
                 dataset.append(data.clone())
-            if not os.path.exists("data/alchem_CrCoNi_data/"):
-                os.makedirs("data/alchem_CrCoNi_data/")
-            torch.save(dataset, f'data/alchem_CrCoNi_data/dataset-{idx}.pt')
-            ase.io.write(f"data/alchem_CrCoNi_data/initial-{idx}.xyz", atoms_list[0])
+            if not os.path.exists("data/CrCoNi_data/"):
+                os.makedirs("data/CrCoNi_data/")
+            torch.save(dataset, f'data/CrCoNi_data/dataset-{idx}.pt')
+            ase.io.write(f"data/CrCoNi_data/initial-{idx}.xyz", atoms_list[0])
             return len(dataset)
         else:
             _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+            # _RDF = torch.load(self.traj_rdf[idx], weights_only=False)
+            # assert _RDF[0].shape == (2,35)
+            LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
             if random_starting_point:
                 start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames, 1)[0]
             else:
@@ -229,25 +387,35 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             num_atoms = dataset[0].num_atoms
 
             # TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
-            # LSS_reward = torch.stack([data.E_now-data.E_next for data in dataset]) # T
+            LSS_reward = torch.stack([data.E_now for data in dataset]) # T
 
-            # non_moving_mask = (disp.norm(dim=-1) < 0.01).float() # T,L
-            # mask = non_moving_mask * torch.exp(torch.tensor(-10.)) + (1-non_moving_mask)*torch.exp(TKS_reward)[:,None] # T,L
-            # v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
-            mask = np.ones([len(dataset), num_atoms, 5])
-            v_mask = np.ones([len(dataset), num_atoms, 3])
+            # log_mask = -LSS_reward - self.partition
+            ### Normalize over each trajectory
+            log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+            mask = torch.exp(log_mask)[:,None] # T,L
+            v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+            h_mask = mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
+            if self.localmask:
+                disp = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
+                mask = mask*disp
+                h_mask = h_mask*disp
+                v_mask = v_mask*disp
 
-            
+            # x_next = torch.stack([data.pos for data in dataset_next])
+            x = torch.stack([data.pos for data in dataset])
+            T,L,_ = x.shape
+            disp = torch.stack([data.disp for data in dataset])
             return {
                 "name": "CrCoNi",
                 "species": torch.stack([data.z for data in dataset]),
                 "species_next": torch.stack([data.z for data in dataset_next]),
-                "x": torch.stack([data.pos for data in dataset]),
+                "x": x,
                 "cell": torch.stack([data.cell for data in dataset]),
                 "num_atoms": torch.stack([data.num_atoms for data in dataset]),
-                "x_next": torch.stack([data.pos for data in dataset_next]),
                 "mask": mask,
-                "v_mask": v_mask
+                "v_mask": v_mask,
+                "h_mask": h_mask,
+                "e_now": torch.stack([data.E_now for data in dataset]),
             }
          
         

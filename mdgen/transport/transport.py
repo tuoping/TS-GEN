@@ -14,6 +14,7 @@ def mean_flat(x, mask):
     """
     Take the mean over all non-batch dimensions.
     """
+    mask = mask.expand(x.shape)
     return th.sum(x * mask, dim=list(range(1, len(x.size())))) / th.sum(mask, dim=list(range(1, len(x.size()))))
 
 
@@ -57,6 +58,15 @@ def t_to_alpha(t, args):
 
     return 1 * (1 - t) + t * args.alpha_max, (args.alpha_max - 1)
 
+
+def divergence(v_func, x, t, model_kwarg):
+    # v_func: function that outputs v(x,t)
+    x.requires_grad_(True)
+    v = v_func(x, t, **model_kwarg)
+    div = 0.0
+    for i in range(x.shape[-1]):  # iterate over dimensions
+        div += torch.autograd.grad(v[..., i].sum(), x, create_graph=True)[0][..., i]
+    return div 
 
 class Transport:
 
@@ -171,6 +181,15 @@ class Transport:
         else:
             # t, x0, x1 = self.sample(x1)
             t, xt, ut = self.path_sampler.plan(t, x0, x1)
+            ## add latent noise using antithetic sampling
+            # gamma_t = (0.9*t*(1-t)).sqrt()[:,None,None,None]
+            # dt_gamma_t = (0.9/2*(1-2*t)/((t*(1-t)).sqrt()))[:,None,None,None]
+            # xt += gamma_t*x0
+            # xt_ = xt.clone()
+            # xt_ -= gamma_t*x0
+            # ut += dt_gamma_t*x0
+            # ut_ = ut.clone()
+            # ut_ -= dt_gamma_t*x0
         
         B = x1.shape[0]
         assert t.shape == (B,)
@@ -188,8 +207,13 @@ class Transport:
         terms['pred'] = model_output
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
-                # terms['loss'] = mean_flat(((model_output - ut) ** 2), mask)
-                terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask) # regression based loss
+                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)
+
+                # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
+                # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
+                # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
+
+                terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
@@ -205,15 +229,15 @@ class Transport:
                 if self.model_type == ModelType.NOISE:
                     terms['loss'] = mean_flat(weight * ((model_output - x0) ** 2), mask)
                 else:
+                    terms["loss_continuous"]=(weight * ((model_output * sigma_t + x0) ** 2)*mask)
                     terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask) # loss by comparing the x_0
 
         # more changes for dirichlet flow matching
 
         if self.args.design:
             terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
-            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.argmax(dim=-1).reshape(-1))
-            # loss_d = th.nn.functional.nll_loss(logits.view(-1,5), aatype1.view(-1,5))
-            terms['loss'] = loss_d
+            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.reshape(-1,5).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
+            terms['loss'] = mean_flat(loss_d, mask)
             terms['loss_discrete'] = loss_d
             terms['logits'] = logits
 
@@ -569,8 +593,8 @@ def create_transport(
         train_eps = 1e-3 if train_eps is None else train_eps
         sample_eps = 1e-3 if sample_eps is None else sample_eps
     else:  # velocity & [GVP, LINEAR] is stable everywhere
-        train_eps = 0
-        sample_eps = 0
+        train_eps = 0 if train_eps is None else train_eps
+        sample_eps = 0 if sample_eps is None else sample_eps
 
     # create flow state
     state = Transport(
