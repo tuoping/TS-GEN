@@ -38,8 +38,7 @@ class EquivariantMDGenWrapper(Wrapper):
         else:
             num_scalar_out = 0
             num_vector_out=3
-            # latent_dim = 35
-            latent_dim = 3
+            latent_dim = 35
             
         self.model = EquivariantTransformer_dpm(
             encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
@@ -156,11 +155,11 @@ class EquivariantMDGenWrapper(Wrapper):
                 "aatype": species,
                 "cell": batch["cell"],
                 "num_atoms": batch["num_atoms"],
-                "conditions":
-                {
-                    'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
-                    "mask": cond_mask,
-                }
+                "conditions": None
+                # {
+                #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
+                #     "mask": cond_mask,
+                # }
             }
         }
     
