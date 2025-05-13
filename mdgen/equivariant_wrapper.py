@@ -37,9 +37,9 @@ class EquivariantMDGenWrapper(Wrapper):
             num_vector_out = 0
         else:
             num_scalar_out = 0
-            num_vector_out=3
+            num_vector_out=1
             latent_dim = 35
-            
+        
         self.model = EquivariantTransformer_dpm(
             encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
             processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim),
@@ -146,22 +146,42 @@ class EquivariantMDGenWrapper(Wrapper):
             # num_atoms_cond = batch["num_atoms"][:, ::self.args.cond_interval]
             # cond_mask = (mask != 0)[:,::self.args.cond_interval]
             cond_mask[:, ::self.args.cond_interval] = 1
-        return {
-            "species": species,
-            "latents": latents,
-            'loss_mask': v_loss_mask,
-            "E": batch["e_now"],
-            'model_kwargs': {
-                "aatype": species,
-                "cell": batch["cell"],
-                "num_atoms": batch["num_atoms"],
-                "conditions": None
-                # {
-                #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
-                #     "mask": cond_mask,
-                # }
+        if self.args.potential_model:
+            return {
+                "species": species,
+                "latents": latents,
+                'loss_mask': v_loss_mask,
+                "E": batch["e_now"],
+                'model_kwargs': {
+                    "aatype": species,
+                    "cell": batch["cell"],
+                    "num_atoms": batch["num_atoms"],
+                    "conditions": None
+                    # {
+                    #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
+                    #     "mask": cond_mask,
+                    # }
+                }
             }
-        }
+        else:
+            return {
+                "species": species,
+                "latents": latents,
+                'loss_mask': v_loss_mask,
+                "E": batch["e_now"],
+                'model_kwargs': {
+                    "x1": latents,
+                    'v_mask': v_loss_mask,
+                    "aatype": species,
+                    "cell": batch["cell"],
+                    "num_atoms": batch["num_atoms"],
+                    "conditions": None
+                    # {
+                    #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
+                    #     "mask": cond_mask,
+                    # }
+                }
+            }
     
     def general_step(self, batch, stage='train'):
         self.iter_step += 1
@@ -170,33 +190,34 @@ class EquivariantMDGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
     
         start = time.time()
-        B,T,L,_ = prep["latents"].shape
-        t = torch.ones((B,), device=prep["latents"].device)
-        energy = self.model(prep['latents'], t, **prep["model_kwargs"])
-        energy = energy.sum(dim=2).squeeze(-1)
-        # forces = -torch.autograd.grad(energy, prep['latents'])[0]
-        loss_energy = (energy - prep["E"])**2
-        loss = loss_energy
-        self.log('loss', loss)
-        '''
-        out_dict = self.transport.training_losses(
-            model=self.model,
-            x1=prep['latents'],
-            aatype1=batch['species'],
-            mask=prep['loss_mask'],
-            model_kwargs=prep['model_kwargs']
-        )
-        self.log('model_dur', time.time() - start)
-        loss = out_dict['loss']
-        self.log('loss', loss)
+        if self.args.potential_model:
+            B,T,L,_ = prep["latents"].shape
+            t = torch.ones((B,), device=prep["latents"].device)
+            energy = self.model(prep['latents'], t, **prep["model_kwargs"])
+            energy = energy.sum(dim=2).squeeze(-1)
+            # forces = -torch.autograd.grad(energy, prep['latents'])[0]
+            loss_energy = (energy - prep["E"])**2
+            loss = loss_energy
+            self.log('loss', loss)
+        else:
+            out_dict = self.transport.training_losses(
+                model=self.model,
+                x1=prep['latents'],
+                aatype1=batch['species'],
+                mask=prep['loss_mask'],
+                model_kwargs=prep['model_kwargs']
+            )
+            self.log('model_dur', time.time() - start)
+            loss = out_dict['loss']
+            self.log('loss', loss)
 
-        self.log('time', out_dict['t'])
-        '''
-        self.log('dur', time.time() - self.last_log_time)
-        if 'name' in batch:
-            self.log('name', ','.join(batch['name']))
-        self.log('general_step_dur', time.time() - start1)
-        self.last_log_time = time.time()
+            self.log('time', out_dict['t'])
+
+            self.log('dur', time.time() - self.last_log_time)
+            if 'name' in batch:
+                self.log('name', ','.join(batch['name']))
+            self.log('general_step_dur', time.time() - start1)
+            self.last_log_time = time.time()
         
         return loss.mean()
 
@@ -240,7 +261,7 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_now"]
             logits = samples[..., -5:]
         else:
-            vector_out = samples
+            vector_out = samples*prep["loss_mask"] + prep["latents"]*(1-prep["loss_mask"])
 
         if self.args.design:
             aa_out = torch.argmax(logits, -1)

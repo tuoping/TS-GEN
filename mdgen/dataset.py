@@ -276,7 +276,7 @@ def calculate_rdf_pair(
 
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
-    def __init__(self, traj_dirname, cutoff, num_frames=None, localmask=False, stage="train"):
+    def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, stage="train"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         self.max_num_edges = 4000
@@ -284,6 +284,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
         self.traj_filenames = []
         self.traj_initial = []
         self.traj_rdf = []
+        self.traj_act_space = []
         LSS_reward_pool = []
         for u1 in range(5):
             for k in range(100):
@@ -293,6 +294,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                         self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
                         self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
                         self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
+                        self.traj_act_space.append(os.path.join(traj_dirname, f"act_space-{u1}-{k}.txt"))
                         # _dataset = torch.load(self.traj_filenames[-1], weights_only=False)
                         # LSS_reward_pool.append(torch.stack([data.E_now for data in _dataset]))
 
@@ -302,21 +304,22 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                         self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
                         self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
                         self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
+                        self.traj_act_space.append(os.path.join(traj_dirname, f"act_space-{u1}-{k}.txt"))
                 elif stage == "save":
                     self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
                 else:
                     raise Exception(f"Wrong stage str {stage}")
         self.num_frames = num_frames
         self.stage = stage
-        self.localmask = False
+        self.localmask = localmask
+        self.random_starting_point = random_starting_point
         # self.LSS_reward_pool = torch.concat(LSS_reward_pool, dim=0)
         # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
     
     def __len__(self):
         return len(self.traj_filenames)
     
-    def __getitem__(self, idx, random_starting_point=True):
-        # idx = idx % len(self.traj_filenames)
+    def __getitem__(self, idx):
         idx = idx % len(self.traj_filenames)
         if self.stage == "save":
             atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
@@ -332,8 +335,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 r_, g_r, integral_g_r = calculate_rdf_pair(atoms.positions, atoms.positions, atoms.get_volume(), self.cutoff, 0.1, cell=atoms.cell, pbc=True)
                 dataset_g_r.append(torch.from_numpy(np.stack([r_, g_r])))
             torch.save(dataset_g_r, f'data/CrCoNi_data/RDF-{idx}.pt')
-            return len(dataset_g_r)
-            # return len(atoms_list)
+
             mask = torch.ones((num_atoms,), dtype=torch.float32)
             v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)               
 
@@ -373,43 +375,53 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
             # _RDF = torch.load(self.traj_rdf[idx], weights_only=False)
             # assert _RDF[0].shape == (2,35)
+            act_space = torch.from_numpy(np.loadtxt(self.traj_act_space[idx])).to(torch.long)
             LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
-            if random_starting_point:
+            if self.random_starting_point:
                 start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames, 1)[0]
             else:
                 start_i_traj = 0
             if self.num_frames is None:
-                self.num_frames = len(dataset)
+                self.num_frames = len(_dataset)
             end_i_traj = start_i_traj+self.num_frames
-
             dataset = _dataset[start_i_traj:end_i_traj]
-            dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
+            # dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
             num_atoms = dataset[0].num_atoms
 
             # TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
             LSS_reward = torch.stack([data.E_now for data in dataset]) # T
 
+            x = torch.stack([data.pos for data in dataset])
+            T,L,_ = x.shape
             # log_mask = -LSS_reward - self.partition
             ### Normalize over each trajectory
             log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
-            mask = torch.exp(log_mask)[:,None] # T,L
-            v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
-            h_mask = mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
+            _mask = torch.exp(log_mask)[:,None] # T,L
+            _v_mask = _mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+            _h_mask = _mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
             if self.localmask:
-                disp = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
-                mask = mask*disp
-                h_mask = h_mask*disp
-                v_mask = v_mask*disp
+                # disp_mask = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
+                mask = torch.ones([T,L])
+                v_mask = torch.ones([T,L,3])
+                h_mask = torch.ones([T,L,5])
+                for i_traj in range(start_i_traj, end_i_traj):
+                    disp_mask = torch.zeros([L])
+                    act_space_i = act_space[i_traj]
+                    disp_mask[act_space_i] = 1
+                    mask[i_traj-start_i_traj] = _mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0)
+                    h_mask[i_traj-start_i_traj] = _h_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                    v_mask[i_traj-start_i_traj] = _v_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+            else:
+                mask = _mask
+                v_mask = _v_mask
+                h_mask = _h_mask
 
-            # x_next = torch.stack([data.pos for data in dataset_next])
-            x = torch.stack([data.pos for data in dataset])
-            T,L,_ = x.shape
-            disp = torch.stack([data.disp for data in dataset])
+
             return {
                 "name": "CrCoNi",
                 "species": torch.stack([data.z for data in dataset]),
-                "species_next": torch.stack([data.z for data in dataset_next]),
-                "x": x,
+                # "species_next": torch.stack([data.z for data in dataset_next]),
+                "x": torch.stack([data.pos for data in dataset]),
                 "cell": torch.stack([data.cell for data in dataset]),
                 "num_atoms": torch.stack([data.num_atoms for data in dataset]),
                 "mask": mask,
@@ -450,3 +462,67 @@ class GemnetDataset_CrCoNi(torch.utils.data.Dataset):
                 raise Exception("Atoms length mismatch", len(atoms), num_atoms)
         raise RuntimeError("GemnetDataset_CrCoNi is not implemented yet")    
         
+
+
+class LatentDataset(torch.utils.data.Dataset):
+    def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, stage="train"):
+        self.max_num_edges = 4000
+        self.cutoff = cutoff
+        self.h_traj_filenames = []
+        self.v_traj_filenames = []
+        self.traj_filenames = []
+        for u1 in range(5):
+            for k in range(100):
+                if stage == "train":
+                    criterion = (k%3 <= 1)
+                    if criterion:
+                        self.h_traj_filenames.append(os.path.join(traj_dirname, f"encoded_h-{u1*100+k}.pt"))
+                        self.v_traj_filenames.append(os.path.join(traj_dirname, f"encoded_v-{u1*100+k}.pt"))
+                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+
+                elif stage == "val":
+                    criterion = (k%3 > 1)
+                    if criterion:
+                        self.h_traj_filenames.append(os.path.join(traj_dirname, f"encoded_h-{u1*100+k}.pt"))
+                        self.v_traj_filenames.append(os.path.join(traj_dirname, f"encoded_v-{u1*100+k}.pt"))
+                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                else:
+                    raise Exception(f"Wrong stage str {stage}")
+        self.num_frames = num_frames
+        self.stage = stage
+        self.localmask = False
+        self.random_starting_point = random_starting_point
+        # self.LSS_reward_pool = torch.concat(LSS_reward_pool, dim=0)
+        # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
+    
+    def __len__(self):
+        return len(self.h_traj_filenames)
+    
+    def __getitem__(self, idx):
+        # idx = idx % len(self.traj_filenames)
+        idx = idx % len(self.h_traj_filenames)
+
+        _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+        _dataset_h = torch.load(self.h_traj_filenames[idx], weights_only=False).squeeze(0)
+        _dataset_v = torch.load(self.v_traj_filenames[idx], weights_only=False).squeeze(0)
+        if self.random_starting_point:
+            start_i_traj = np.random.randint(0, len(_dataset_h)-self.num_frames, 1)[0]
+        else:
+            start_i_traj = 0
+        if self.num_frames is None:
+            self.num_frames = len(dataset_h)
+        end_i_traj = start_i_traj+self.num_frames
+        print("start_i_traj", start_i_traj, "end_i_traj", end_i_traj, "len(_dataset)", len(_dataset_h))
+        dataset_h = _dataset_h[0,start_i_traj:end_i_traj]
+        dataset_v = _dataset_v[0,start_i_traj:end_i_traj]
+        dataset = _dataset[start_i_traj:end_i_traj]
+        # dataset_next = _dataset[0,start_i_traj+1:end_i_traj+1]
+        return {
+            "name": "CrCoNi_latent",
+            "v": dataset_v,
+            "h": dataset_h,
+            "species": torch.stack([data.z for data in dataset]),
+            "x": torch.stack([data.pos for data in dataset]),
+            'frac_x': torch.stack([data.frac_pos for data in dataset]),
+            "cell": torch.stack([data.cell for data in dataset]),
+        }

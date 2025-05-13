@@ -79,8 +79,18 @@ class GaussianRandomFourierFeatures(nn.Module):
         super().__init__()
         # Randomly sample weights during initialization. These weights are fixed
         # during optimization and are not trainable.
-        self.register_buffer('B', torch.randn(input_dim, embed_dim//2) * sigma)
+        self.embed_dim = embed_dim
+        if embed_dim > 1:
+            self.register_buffer('B', torch.randn(input_dim, embed_dim//2) * sigma)
+        else:
+            self.register_buffer('B', torch.randn(1, 16) * sigma)
+            self.proj = nn.Linear(16*2, 1)  # Project back to 1D
 
     def forward(self, v: Tensor) -> Tensor:
-        v_proj =  2 * torch.pi * v @ self.B
-        return torch.cat([torch.cos(v_proj), torch.sin(v_proj)], dim=-1)
+        if self.embed_dim > 1:
+            v_proj =  2 * torch.pi * v @ self.B
+            return torch.cat([torch.cos(v_proj), torch.sin(v_proj)], dim=-1)
+        else:
+            v_proj = 2 * torch.pi * v @ self.B
+            features = torch.cat([torch.cos(v_proj), torch.sin(v_proj)], dim=-1)
+            return self.proj(features)

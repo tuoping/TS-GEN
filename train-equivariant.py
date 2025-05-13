@@ -26,12 +26,12 @@ class ResetLrCallback(pl.Callback):
 
 torch.set_float32_matmul_precision('medium')
 
-trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, stage="train")
+trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, stage="train")
 
 if args.overfit:
     valset = trainset    
 else:
-    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, stage="val")
+    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, stage="val")
 
 train_loader = torch.utils.data.DataLoader(
     trainset,
