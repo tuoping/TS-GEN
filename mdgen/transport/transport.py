@@ -191,9 +191,9 @@ class Transport:
             # ut_ = ut.clone()
             # ut_ -= dt_gamma_t*x0
         
-        B = x1.shape[0]
+        B,T,L,_ = x1.shape
         assert t.shape == (B,)
-        model_output = model(xt, t, **model_kwargs)
+        model_output = model(xt*mask+x1*(1-mask) , t, **model_kwargs)
             
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)
@@ -242,7 +242,100 @@ class Transport:
             terms['logits'] = logits
 
         return terms
-            
+
+
+    def training_losses_latentflow(
+            self,
+            model,
+            x1,           # target tokens
+            aatype1=None, # target aatype
+            mask=None,
+            model_kwargs=None
+    ):
+        """Loss for training the score model
+        Args:
+        - model: backbone model; could be score, noise, or velocity
+        - x1: datapoint
+        - model_kwargs: additional arguments for the model
+        """
+
+        if model_kwargs == None:
+            model_kwargs = {}
+        
+        ### normal sampler of t
+        t, x0, x1 = self.sample(x1)
+        # t, xt, ut = self.path_sampler.plan(t, x0, x1)
+        if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
+            assert self.model_type == ModelType.VELOCITY
+            seq_one_hot = aatype1
+            ### exponential sampler of t
+            # exponential_dist = torch.distributions.Exponential(1.0)
+            # t = exponential_dist.sample((seq_one_hot.shape[0],)).to(seq_one_hot.device).float()
+            alphas, _ = t_to_alpha(t, self.args)
+            alphas = torch.ones_like(seq_one_hot) + seq_one_hot * (alphas[:, None, None, None] - torch.ones_like(seq_one_hot))
+            x_d = th.distributions.Dirichlet(alphas).sample()
+            xt = x_d
+
+            # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
+        else:
+            # t, x0, x1 = self.sample(x1)
+            t, xt, ut = self.path_sampler.plan(t, x0, x1)
+            ## add latent noise using antithetic sampling
+            # gamma_t = (0.9*t*(1-t)).sqrt()[:,None,None,None]
+            # dt_gamma_t = (0.9/2*(1-2*t)/((t*(1-t)).sqrt()))[:,None,None,None]
+            # xt += gamma_t*x0
+            # xt_ = xt.clone()
+            # xt_ -= gamma_t*x0
+            # ut += dt_gamma_t*x0
+            # ut_ = ut.clone()
+            # ut_ -= dt_gamma_t*x0
+        
+        B,T,_ = x1.shape
+        assert t.shape == (B,)
+        model_output = model(model_kwargs["h"], xt.view(B,T,-1,3), t)
+        torch.hstack(model_output)
+        terms = {}
+        terms['t'] = t
+        terms['pred'] = model_output
+        if not (self.args.design):
+            if self.model_type == ModelType.VELOCITY:
+                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)
+
+                # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
+                # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
+                # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
+
+                terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
+            else:
+                _, drift_var = self.path_sampler.compute_drift(xt, t)
+                sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
+                if self.loss_type in [WeightType.VELOCITY]:
+                    weight = (drift_var / sigma_t) ** 2
+                elif self.loss_type in [WeightType.LIKELIHOOD]:
+                    weight = drift_var / (sigma_t ** 2)
+                elif self.loss_type in [WeightType.NONE]:
+                    weight = 1
+                else:
+                    raise NotImplementedError()
+
+                if self.model_type == ModelType.NOISE:
+                    terms['loss'] = mean_flat(weight * ((model_output - x0) ** 2), mask)
+                else:
+                    terms["loss_continuous"]=(weight * ((model_output * sigma_t + x0) ** 2)*mask)
+                    terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask) # loss by comparing the x_0
+
+        # more changes for dirichlet flow matching
+
+        if self.args.design:
+            terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
+            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.reshape(-1,5).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
+            terms['loss'] = mean_flat(loss_d, mask)
+            terms['loss_discrete'] = loss_d
+            terms['logits'] = logits
+
+        return terms            
+
+
 
     def get_drift(
             self
