@@ -285,30 +285,29 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
         self.traj_initial = []
         self.traj_rdf = []
         self.traj_act_space = []
+        self.idx_sources = []
         LSS_reward_pool = []
         for u1 in range(5):
             for k in range(100):
+                idx = u1*100+k
                 if stage == "train":
                     criterion = (k%3 <= 1)
-                    if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
-                        self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
-                        self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
-                        self.traj_act_space.append(os.path.join(traj_dirname, f"act_space-{u1}-{k}.txt"))
-                        # _dataset = torch.load(self.traj_filenames[-1], weights_only=False)
-                        # LSS_reward_pool.append(torch.stack([data.E_now for data in _dataset]))
-
                 elif stage == "val":
                     criterion = (k%3 > 1)
-                    if criterion:
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
-                        self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
-                        self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
-                        self.traj_act_space.append(os.path.join(traj_dirname, f"act_space-{u1}-{k}.txt"))
                 elif stage == "save":
                     self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
+                    criterion = False
                 else:
                     raise Exception(f"Wrong stage str {stage}")
+                if criterion:
+                    self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+                    self.traj_rdf.append(os.path.join(traj_dirname, f"RDF-{u1*100+k}.pt"))
+                    self.traj_initial.append(os.path.join(traj_dirname, f"initial-{u1*100+k}.xyz"))
+                    self.traj_act_space.append(os.path.join(traj_dirname, f"act_space-{u1}-{k}.txt"))
+                    self.idx_sources.append(idx)
+                    # _dataset = torch.load(self.traj_filenames[-1], weights_only=False)
+                    # LSS_reward_pool.append(torch.stack([data.E_now for data in _dataset]))
+
         self.num_frames = num_frames
         self.stage = stage
         self.localmask = localmask
@@ -372,6 +371,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             ase.io.write(f"data/CrCoNi_data/initial-{idx}.xyz", atoms_list[0])
             return len(dataset)
         else:
+            idx_source = self.idx_sources[idx]
             _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
             # _RDF = torch.load(self.traj_rdf[idx], weights_only=False)
             # assert _RDF[0].shape == (2,35)
@@ -418,6 +418,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
 
 
             return {
+                "idx": idx_source,
                 "name": "CrCoNi",
                 "species": torch.stack([data.z for data in dataset]),
                 # "species_next": torch.stack([data.z for data in dataset_next]),
@@ -466,28 +467,25 @@ class GemnetDataset_CrCoNi(torch.utils.data.Dataset):
 
 class LatentDataset(torch.utils.data.Dataset):
     def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, stage="train"):
-        self.max_num_edges = 4000
         self.cutoff = cutoff
         self.h_traj_filenames = []
         self.v_traj_filenames = []
         self.traj_filenames = []
         for u1 in range(5):
             for k in range(100):
+                idx = u1*100+k
                 if stage == "train":
                     criterion = (k%3 <= 1)
-                    if criterion:
-                        self.h_traj_filenames.append(os.path.join(traj_dirname, f"encoded_h-{u1*100+k}.pt"))
-                        self.v_traj_filenames.append(os.path.join(traj_dirname, f"encoded_v-{u1*100+k}.pt"))
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
-
                 elif stage == "val":
                     criterion = (k%3 > 1)
-                    if criterion:
-                        self.h_traj_filenames.append(os.path.join(traj_dirname, f"encoded_h-{u1*100+k}.pt"))
-                        self.v_traj_filenames.append(os.path.join(traj_dirname, f"encoded_v-{u1*100+k}.pt"))
-                        self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
                 else:
                     raise Exception(f"Wrong stage str {stage}")
+
+                if criterion:
+                    self.h_traj_filenames.append(os.path.join(traj_dirname, f"encoded_h-{u1*100+k}.pt"))
+                    self.v_traj_filenames.append(os.path.join(traj_dirname, f"encoded_v-{u1*100+k}.pt"))
+                    self.traj_filenames.append(os.path.join(traj_dirname, f"dataset-{u1*100+k}.pt"))
+
         self.num_frames = num_frames
         self.stage = stage
         self.localmask = False
@@ -496,15 +494,16 @@ class LatentDataset(torch.utils.data.Dataset):
         # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
     
     def __len__(self):
-        return len(self.h_traj_filenames)
+        return len(self.traj_filenames)
     
     def __getitem__(self, idx):
-        # idx = idx % len(self.traj_filenames)
-        idx = idx % len(self.h_traj_filenames)
+        idx = idx % len(self.traj_filenames)
 
         _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
         _dataset_h = torch.load(self.h_traj_filenames[idx], weights_only=False).squeeze(0)
         _dataset_v = torch.load(self.v_traj_filenames[idx], weights_only=False).squeeze(0)
+        assert _dataset_h.shape[1] == _dataset[0].pos.shape[0], f"dataset_h shape {_dataset_h.shape} should be same as dataset shape {torch.stack([data.pos for data in _dataset]).shape}"
+
         if self.random_starting_point:
             start_i_traj = np.random.randint(0, len(_dataset_h)-self.num_frames, 1)[0]
         else:
@@ -512,11 +511,19 @@ class LatentDataset(torch.utils.data.Dataset):
         if self.num_frames is None:
             self.num_frames = len(dataset_h)
         end_i_traj = start_i_traj+self.num_frames
-        print("start_i_traj", start_i_traj, "end_i_traj", end_i_traj, "len(_dataset)", len(_dataset_h))
-        dataset_h = _dataset_h[0,start_i_traj:end_i_traj]
-        dataset_v = _dataset_v[0,start_i_traj:end_i_traj]
+        dataset_h = _dataset_h[start_i_traj:end_i_traj]
+        dataset_v = _dataset_v[start_i_traj:end_i_traj]
         dataset = _dataset[start_i_traj:end_i_traj]
-        # dataset_next = _dataset[0,start_i_traj+1:end_i_traj+1]
+        # cell_tensor = torch.stack([data.cell for data in dataset]).reshape(self.num_frames, 9) # T,3,3
+        cell = torch.stack([torch.tensor([torch.linalg.norm(data.cell[0]), 
+                             torch.linalg.norm(data.cell[1]),
+                             torch.linalg.norm(data.cell[2]),
+                             torch.acos(torch.dot(data.cell[0], data.cell[1])/(torch.linalg.norm(data.cell[0])*torch.linalg.norm(data.cell[1])))/torch.pi*180,
+                             torch.acos(torch.dot(data.cell[1], data.cell[2])/(torch.linalg.norm(data.cell[1])*torch.linalg.norm(data.cell[2])))/torch.pi*180,
+                             torch.acos(torch.dot(data.cell[0], data.cell[2])/(torch.linalg.norm(data.cell[0])*torch.linalg.norm(data.cell[2])))/torch.pi*180,
+                            ])
+                             for data in dataset])
+        
         return {
             "name": "CrCoNi_latent",
             "v": dataset_v,
@@ -524,5 +531,5 @@ class LatentDataset(torch.utils.data.Dataset):
             "species": torch.stack([data.z for data in dataset]),
             "x": torch.stack([data.pos for data in dataset]),
             'frac_x': torch.stack([data.frac_pos for data in dataset]),
-            "cell": torch.stack([data.cell for data in dataset]),
+            "cell": cell,
         }

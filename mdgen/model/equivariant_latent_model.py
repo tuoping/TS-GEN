@@ -491,95 +491,23 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
     
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int) -> None:
+    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int,
+                 nhead: int=4, 
+                 dim_feedforward: int=1024,
+                 activation: str='gelu',
+                 dropout: float=0.0,
+                 norm_first: bool = True,
+                 bias: bool = True,
+                 num_layers: int = 6,
+                 ) -> None:
         super().__init__()
         self.dim = dim
         self.num_scalar_out = num_scalar_out
         self.num_vector_out = num_vector_out
-        self.Oh = nn.Parameter(torch.randn(dim, num_scalar_out))
-        self.Ov = nn.Parameter(torch.randn(dim, num_vector_out))
 
-    def forward(self, h:Tensor, v: Tensor) -> Tensor:
-        h_ = h @ self.Oh
-        v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
-        # return h_out, v_out.squeeze()
-        assert h_.shape[-1] == 5
-        h_out = torch.nn.functional.softmax(h_[...,-5:], dim=-1)
-        return h_out, v_out.squeeze()
-
-        
-
-    def extra_repr(self) -> str:
-        return f'(Oh): tensor({list(self.Oh.shape)}, requires_grad={self.Oh.requires_grad}) \n' \
-             + f'(Ov): tensor({list(self.Ov.shape)}, requires_grad={self.Ov.requires_grad})'
-
-
-"""
-Adapted from: https://github.com/facebookresearch/all-atom-diffusion-transformer/
-"""
-'''
-import math
-from typing import Any, Dict, Tuple
-
-import torch
-from torch import nn
-from torch_geometric.utils import to_dense_batch
-from torch_scatter import scatter
-
-
-def get_index_embedding(indices, emb_dim, max_len=2048):
-    """Creates sine / cosine positional embeddings from a prespecified indices.
-
-    Args:
-        indices: offsets of size [..., num_tokens] of type integer
-        emb_dim: dimension of the embeddings to create
-        max_len: maximum length
-
-    Returns:
-        positional embedding of shape [..., num_tokens, emb_dim]
-    """
-    K = torch.arange(emb_dim // 2, device=indices.device)
-    pos_embedding_sin = torch.sin(
-        indices[..., None] * math.pi / (max_len ** (2 * K[None] / emb_dim))
-    ).to(indices.device)
-    pos_embedding_cos = torch.cos(
-        indices[..., None] * math.pi / (max_len ** (2 * K[None] / emb_dim))
-    ).to(indices.device)
-    pos_embedding = torch.cat([pos_embedding_sin, pos_embedding_cos], axis=-1)
-    return pos_embedding
-
-
-class TransformerDecoder(nn.Module):
-    """Transformer decoder as part of pure Transformer-based VAEs.
-
-    See src/models/encoders/transformer.py for documentation.
-    """
-
-    def __init__(
-        self,
-        max_num_elements=100,
-        d_model: int = 1024,
-        nhead: int = 8,
-        dim_feedforward: int = 2048,
-        activation: str = "gelu",
-        dropout: float = 0.0,
-        norm_first: bool = True,
-        bias: bool = True,
-        num_layers: int = 6,
-    ):
-        super().__init__()
-
-        self.max_num_elements = max_num_elements
-        self.d_model = d_model
-        self.num_layers = num_layers
-
-        activation = {
-            "gelu": nn.GELU(approximate="tanh"),
-            "relu": nn.ReLU(),
-        }[activation]
         self.transformer = nn.TransformerEncoder(
             nn.TransformerEncoderLayer(
-                d_model=d_model,
+                d_model=dim,
                 nhead=nhead,
                 dim_feedforward=dim_feedforward,
                 activation=activation,
@@ -588,57 +516,100 @@ class TransformerDecoder(nn.Module):
                 norm_first=norm_first,
                 bias=bias,
             ),
-            norm=nn.LayerNorm(d_model),
+            norm=nn.LayerNorm(dim),
             num_layers=num_layers,
         )
 
-        self.atom_types_head = nn.Linear(d_model, max_num_elements, bias=True)
-        self.pos_head = nn.Linear(d_model, 3, bias=False)
-        self.frac_coords_head = nn.Linear(d_model, 3, bias=False)
-        self.lattice_head = nn.Linear(d_model, 6, bias=False)
+        self.Oh = nn.Parameter(torch.randn(dim, num_scalar_out))
+        self.Ov = nn.Parameter(torch.randn(dim, num_vector_out))
+        self.Ov_frac = nn.Parameter(torch.randn(dim, num_vector_out))
+        self.Ol = nn.Parameter(torch.randn(dim, num_vector_out*3+1, 6))
 
-    def forward(self, encoded_batch: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        """
-        Args:
-            encoded_batch: Dict with the following attributes:
-                x (torch.Tensor): Encoded batch of atomic environments
-                num_atoms (torch.Tensor): Number of atoms in each molecular environment
-                batch (torch.Tensor): Batch index for each atom
-                token_idx (torch.Tensor): Token index for each atom
-        """
-        x = encoded_batch["x"]
-
-        # Positional embedding
-        x += get_index_embedding(encoded_batch["token_idx"], self.d_model)
-
-        # Convert from PyG batch to dense batch with padding
-        x, token_mask = to_dense_batch(x, encoded_batch["batch"])
-
-        # Transformer forward pass
-        x = self.transformer.forward(x, src_key_padding_mask=(~token_mask))
-        x = x[token_mask]
-
-        # Global pooling: (n, d) -> (bsz, d)
-        x_global = scatter(x, encoded_batch["batch"], dim=0, reduce="mean")
-
-        # Atomic type prediction head
-        atom_types_out = self.atom_types_head(x)
-
-        # Lattice lengths and angles prediction head
-        lattices_out = self.lattice_head(x_global)
-
-        # Fractional coordinates prediction head
-        frac_coords_out = self.frac_coords_head(x)
-
-        # Cartesian coordinates prediction head
-        pos_out = self.pos_head(x)
-
+    def forward(self, h:Tensor, v: Tensor) -> Tensor:
+        B,T,N,_ = h.shape
+        h = h.reshape(B*T*N,-1)
+        v = v.reshape(B*T*N,-1,3)
+        h = h.unsqueeze(-1)
+        x = torch.concatenate([h, v], dim=-1).transpose(1, 2)
+        x = self.transformer.forward(x)
+        x = x.transpose(1, 2)
+        h = x[..., 0]
+        v = x[..., 1:]
+        h_ = h @ self.Oh
+        v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
+        v_frac_out = torch.einsum('ndi, df -> nfi', v, self.Ov_frac)
+        x = x.reshape(B*T,N,-1,4)
+        l_out = torch.einsum('ndi, dif -> nf', x.mean(1), self.Ol)
+        assert h_.shape[-1] == 5
+        h_out = torch.nn.functional.softmax(h_[...,-5:], dim=-1)
         return {
-            "atom_types": atom_types_out,
-            "lattices": lattices_out,
-            "lengths": lattices_out[:, :3],
-            "angles": lattices_out[:, 3:],
-            "frac_coords": frac_coords_out,
-            "pos": pos_out,
-        }
-'''
+            "aatype": h_out.reshape(B, T, N, -1), 
+            "pos": v_out.squeeze().reshape(B, T, N, -1), 
+            "frac_pos": v_frac_out.squeeze().reshape(B, T, N, -1), 
+            "cell": l_out.squeeze().reshape(B, T, -1)
+            }
+
+    def extra_repr(self) -> str:
+        return f'(Oh): tensor({list(self.Oh.shape)}, requires_grad={self.Oh.requires_grad}) \n' \
+             + f'(Ov): tensor({list(self.Ov.shape)}, requires_grad={self.Ov.requires_grad})'
+
+
+
+class TransformerProcessor(nn.Module):
+    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int,
+                 nhead: int=4, 
+                 dim_feedforward: int=1024,
+                 activation: str='gelu',
+                 dropout: float=0.0,
+                 norm_first: bool = True,
+                 bias: bool = True,
+                 num_layers: int = 6,
+                 node_dim: int = 4,
+                 edge_dim: int = 64,
+                 input_dim: int = 1,
+                 ) -> None:
+        super().__init__()
+        self.dim = dim
+        self.num_scalar_out = num_scalar_out
+        self.num_vector_out = num_vector_out
+
+        self.transformer = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=dim,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                activation=activation,
+                dropout=dropout,
+                batch_first=True,
+                norm_first=norm_first,
+                bias=bias,
+            ),
+            norm=nn.LayerNorm(dim),
+            num_layers=num_layers,
+        )
+
+        self.embed_time = nn.Sequential(
+            GaussianRandomFourierFeatures(node_dim, input_dim=input_dim),
+            MLP([node_dim, edge_dim, node_dim], act=nn.SiLU()),
+        )
+
+    def inference(self, x:Tensor) -> Tensor:
+        x = x.transpose(1, 2)
+        x = self.transformer.forward(x)
+        x = x.transpose(1, 2)
+        # h = x[..., 0]
+        # v = x[..., 1:]
+        return x
+    
+    def forward(self, x: Tensor, t: Tensor) -> Tensor:
+        B,T,N,D,_ = x.shape
+        # h = x[..., 0] 
+        # v = x[..., 1:]
+        x = x + self.embed_time(t)[None,None,None,:,None]
+        x_out = self.inference(x.reshape(B*T*N,D,4))
+        return x_out.reshape(B,T,N,D,4)
+
+
+    def extra_repr(self) -> str:
+        return f'(Oh): tensor({list(self.Oh.shape)}, requires_grad={self.Oh.requires_grad}) \n' \
+             + f'(Ov): tensor({list(self.Ov.shape)}, requires_grad={self.Ov.requires_grad})'
