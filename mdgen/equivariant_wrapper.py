@@ -38,7 +38,7 @@ class EquivariantMDGenWrapper(Wrapper):
         else:
             num_scalar_out = 0
             num_vector_out=1
-            latent_dim = 35
+            latent_dim = 3
         
         self.model = EquivariantTransformer_dpm(
             encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
@@ -157,10 +157,23 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
-                    # {
-                    #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
-                    #     "mask": cond_mask,
-                    # }
+                }
+            }
+        elif self.args.sim_condition or self.args.cond_interval:
+            return {
+                "species": batch['species_next'],
+                "latents": batch['x_next'],
+                'loss_mask': v_loss_mask,
+                'model_kwargs': {
+                    "x1": batch['x_next'],
+                    'v_mask': v_loss_mask,
+                    "aatype": batch['species_next'],
+                    "cell": batch["cell"],
+                    "num_atoms": batch["num_atoms"],
+                    "conditions": {
+                        'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
+                        "mask": cond_mask,
+                    }
                 }
             }
         else:
@@ -176,10 +189,6 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
-                    # {
-                    #     'x':torch.where(cond_mask.unsqueeze(-1).bool(), rdf, 0.0),
-                    #     "mask": cond_mask,
-                    # }
                 }
             }
     
@@ -188,7 +197,7 @@ class EquivariantMDGenWrapper(Wrapper):
         self.stage = stage
         start1 = time.time()
         prep = self.prep_batch(batch)
-    
+
         start = time.time()
         if self.args.potential_model:
             B,T,L,_ = prep["latents"].shape

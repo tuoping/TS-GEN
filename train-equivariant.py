@@ -19,19 +19,19 @@ class ResetLrCallback(pl.Callback):
             for pg in optimizer.param_groups:
                 pg["lr"] = self.new_lr
         ## (optional) reset schedulers if you wish
-        for scheduler in trainer.lr_schedulers():
-            scheduler["scheduler"].base_lrs = [self.new_lr]
-            scheduler["scheduler"].last_epoch = -1  # starts fresh
+        # scheduler = pl_module.lr_schedulers()
+        # scheduler.base_lrs = [self.new_lr]
+        # scheduler.last_epoch = 1499  # starts fresh
 
 
 torch.set_float32_matmul_precision('medium')
 
-trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, stage="train")
+trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, sim_condition=args.sim_condition, stage="train")
 
 if args.overfit:
     valset = trainset    
 else:
-    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, stage="val")
+    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, sim_condition=args.sim_condition, stage="val")
 
 train_loader = torch.utils.data.DataLoader(
     trainset,
@@ -61,7 +61,7 @@ trainer = pl.Trainer(
     gradient_clip_val=args.grad_clip,
     default_root_dir=os.environ["MODEL_DIR"], 
     callbacks=[
-        # ResetLrCallback(args.lr),
+        ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=-1,

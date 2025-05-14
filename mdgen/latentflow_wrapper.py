@@ -118,6 +118,7 @@ class LatentGenWrapper(Wrapper):
         return {
             "latents": x,
             "loss_mask": mask,
+            "model_kwargs": {}
         }
     
     def general_step(self, batch, stage='train'):
@@ -156,7 +157,7 @@ class LatentGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
 
         latents = prep['latents']
-        B, T, N, D = latents.shape
+        B, T, N, D, K = latents.shape
 
         if self.args.design:
             # zs_continuous = torch.randn(B, T, N, self.latent_dim - 5, device=latents.device)
@@ -175,14 +176,14 @@ class LatentGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)
+            zs = torch.randn(B, T, N, D, K, device=self.device)
 
         sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)  # default to ode
         # sample_fn = self.transport_sampler.sample_sde(sampling_method=self.args.sampling_method, num_steps=self.args.inference_steps)  # default to ode
 
         samples = sample_fn(
             zs,
-            partial(self.model.forward_inference, **prep['model_kwargs'])
+            partial(self.model.forward_inference, **prep['model_kwargs']),
         )[-1]
         
         if self.args.design:

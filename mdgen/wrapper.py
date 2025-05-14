@@ -169,20 +169,20 @@ class Wrapper(pl.LightningModule):
         optimizer = cls(
             filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
         )
-        return optimizer
+        # return optimizer
 
-        # scheduler = torch.optim.lr_scheduler.StepLR(
-        #     optimizer,
-        #     step_size=1,
-        #     gamma=0.99
-        # )
-        # return {
-        #     'optimizer': optimizer,
-        #     'lr_scheduler': {
-        #         'scheduler': scheduler,
-        #         'monitor': 'val_loss'    # metric to monitor
-        #     }
-        # }
+        scheduler = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=1,
+            gamma=0.99
+        )
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'monitor': 'val_loss'    # metric to monitor
+            }
+        }
 
 
 class NewMDGenWrapper(Wrapper):

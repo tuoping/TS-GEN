@@ -276,7 +276,7 @@ def calculate_rdf_pair(
 
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
-    def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, stage="train"):
+    def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, sim_condition=True, stage="train"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         self.max_num_edges = 4000
@@ -312,6 +312,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
         self.stage = stage
         self.localmask = localmask
         self.random_starting_point = random_starting_point
+        self.sim_condition = sim_condition
         # self.LSS_reward_pool = torch.concat(LSS_reward_pool, dim=0)
         # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
     
@@ -378,24 +379,28 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             act_space = torch.from_numpy(np.loadtxt(self.traj_act_space[idx])).to(torch.long)
             LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
             if self.random_starting_point:
-                start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames, 1)[0]
+                start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames-1, 1)[0]
             else:
                 start_i_traj = 0
             if self.num_frames is None:
                 self.num_frames = len(_dataset)
             end_i_traj = start_i_traj+self.num_frames
             dataset = _dataset[start_i_traj:end_i_traj]
-            # dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
+            dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
             num_atoms = dataset[0].num_atoms
-
-            # TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
-            LSS_reward = torch.stack([data.E_now for data in dataset]) # T
+            if self.sim_condition:
+                TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
+            else:
+                LSS_reward = torch.stack([data.E_now for data in dataset]) # T
 
             x = torch.stack([data.pos for data in dataset])
             T,L,_ = x.shape
             # log_mask = -LSS_reward - self.partition
             ### Normalize over each trajectory
-            log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+            if self.sim_condition:
+                log_mask = -TKS_reward
+            else:
+                log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
             _mask = torch.exp(log_mask)[:,None] # T,L
             _v_mask = _mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
             _h_mask = _mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
@@ -416,20 +421,35 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 v_mask = _v_mask
                 h_mask = _h_mask
 
-
-            return {
-                "idx": idx_source,
-                "name": "CrCoNi",
-                "species": torch.stack([data.z for data in dataset]),
-                # "species_next": torch.stack([data.z for data in dataset_next]),
-                "x": torch.stack([data.pos for data in dataset]),
-                "cell": torch.stack([data.cell for data in dataset]),
-                "num_atoms": torch.stack([data.num_atoms for data in dataset]),
-                "mask": mask,
-                "v_mask": v_mask,
-                "h_mask": h_mask,
-                "e_now": torch.stack([data.E_now for data in dataset]),
-            }
+            if self.sim_condition:
+                return {
+                    "idx": idx_source,
+                    "name": "CrCoNi",
+                    "species": torch.stack([data.z for data in dataset]),
+                    "species_next": torch.stack([data.z for data in dataset_next]),
+                    "x": torch.stack([data.pos for data in dataset]),
+                    'x_next': torch.stack([data.pos for data in dataset_next]),
+                    "cell": torch.stack([data.cell for data in dataset]),
+                    "num_atoms": torch.stack([data.num_atoms for data in dataset]),
+                    "mask": mask,
+                    "v_mask": v_mask,
+                    "h_mask": h_mask,
+                    "e_now": torch.stack([data.E_now for data in dataset]),
+                }
+            else:
+                return {
+                    "idx": idx_source,
+                    "name": "CrCoNi",
+                    "species": torch.stack([data.z for data in dataset]),
+                    # "species_next": torch.stack([data.z for data in dataset_next]),
+                    "x": torch.stack([data.pos for data in dataset]),
+                    "cell": torch.stack([data.cell for data in dataset]),
+                    "num_atoms": torch.stack([data.num_atoms for data in dataset]),
+                    "mask": mask,
+                    "v_mask": v_mask,
+                    "h_mask": h_mask,
+                    "e_now": torch.stack([data.E_now for data in dataset]),
+                }
          
         
 

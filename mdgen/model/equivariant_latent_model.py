@@ -205,7 +205,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             #     torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
             #     )
             # h = h + self.cond_to_emb(h_cond)*(out_cond["mask"].reshape(-1,1)) # + self.mask_to_emb(out_cond["mask"])
-            h = h + self.cond_to_emb(out_cond["x"]) + self.mask_to_emb(out_cond["mask"])
+            h = h + self.cond_to_emb(out_cond["x"].reshape(-1,3)) + self.mask_to_emb(out_cond["mask"].reshape(-1))
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return self.decoder(h, v)
 
@@ -609,7 +609,11 @@ class TransformerProcessor(nn.Module):
         x_out = self.inference(x.reshape(B*T*N,D,4))
         return x_out.reshape(B,T,N,D,4)
 
-
-    def extra_repr(self) -> str:
-        return f'(Oh): tensor({list(self.Oh.shape)}, requires_grad={self.Oh.requires_grad}) \n' \
-             + f'(Ov): tensor({list(self.Ov.shape)}, requires_grad={self.Ov.requires_grad})'
+    
+    def forward_inference(self, x: Tensor, t: Tensor, conditions=None) -> Tensor:
+        B,T,N,D,_ = x.shape
+        # h = x[..., 0] 
+        # v = x[..., 1:]
+        x = x + self.embed_time(t)[None,None,None,:,None]
+        x_out = self.inference(x.reshape(B*T*N,D,4))
+        return x_out.reshape(B,T,N,D,4)
