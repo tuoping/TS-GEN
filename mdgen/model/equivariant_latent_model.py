@@ -449,7 +449,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
             return scaler_out.view(B, T, N, -1)
         elif self.potential_model:
-            return vector_out.reshape(B, T, N, -1)
+            return scaler_out.reshape(B, T, N, -1)
         else:
             return vector_out.reshape(B, T, N, -1)
         
@@ -462,14 +462,20 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             x_ = x_latt
             aatype_ = x
             if not self.potential_model:
-                x_ = x_*v_mask+x1*(1-v_mask)
+                x_ = x_*v_mask+x1*(~v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
-            return scaler_out*v_mask
+            if not self.potential_model:
+                return scaler_out*v_mask
+            else:
+                return scaler_out
         else:
             if not self.potential_model:
-                x = x*v_mask+x1*(1-v_mask)
+                x = x*v_mask+x1*(~v_mask)
             vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return vector_out*v_mask
+            if not self.potential_model:
+                return vector_out*v_mask
+            else:
+                return vector_out
 
     def forward_inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
@@ -480,14 +486,21 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             x_ = x_latt
             aatype_ = x
             if not self.potential_model:
-                x_ = x_*v_mask+x1*(1-v_mask)
+                x_ = x_*v_mask+x1*(~v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
-            return scaler_out*v_mask
+            if not self.potential_model:
+                return scaler_out*v_mask
+            else:
+                return scaler_out
+
         else:
             if not self.potential_model:
-                x = x*v_mask+x1*(1-v_mask)
+                x = x*v_mask+x1*(~v_mask)
             vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return vector_out*v_mask
+            if not self.potential_model:
+                return vector_out*v_mask
+            else:
+                return vector_out
     
 
 class TransformerDecoder(nn.Module):

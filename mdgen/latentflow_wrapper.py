@@ -65,42 +65,22 @@ class LatentGenWrapper(Wrapper):
             return self.prep_batch_x(batch)
 
     def prep_batch_species(self, batch):
-        species = batch["species"]
-        latents = batch["species"]
-        x_now = batch["x"]
-        
-    
-        B, T, L, num_elem = species.shape
-
-        
-        if self.args.design:
-            loss_mask = batch["mask"]
-            # loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
-            loss_mask = loss_mask
-        else:
-            v_loss_mask = batch["v_mask"]
-            loss_mask = v_loss_mask
-
-
-        B, T, L, _ = latents.shape
-        assert _ == 5, f"latents shape should be (B, T, D, 5), but got {latents.shape}"
+        h = batch["h"].unsqueeze(-1)
+        v = batch["v"]
+        x = torch.concatenate([h,v], -1)
+        B, T, L, D, _ = x.shape
+        mask = torch.ones_like(x, device=x.device)
+        mask[:,:,:,:,1:] = 0 # mask out the last 3 channels (v)
         ########
-        cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
+        cond_mask = torch.zeros(B, T, L, dtype=int, device=x.device)
         if self.args.sim_condition:
             cond_mask[:, 0] = 1
         if self.args.cond_interval:
             cond_mask[:, ::self.args.cond_interval] = 1
         return {
-            "species": latents,
-            "latents": latents,
-            'loss_mask': loss_mask,
-            'model_kwargs': {
-                "cell": batch["cell"],
-                "num_atoms": batch["num_atoms"],
-                "conditions": None,
-                "aatype": None,
-                "x_latt": x_now,
-            }
+            "latents": x,
+            "loss_mask": mask,
+            "model_kwargs": {}
         }
 
     def prep_batch_x(self, batch):
@@ -109,6 +89,7 @@ class LatentGenWrapper(Wrapper):
         x = torch.concatenate([h,v], -1)
         B, T, L, D, _ = x.shape
         mask = torch.ones_like(x, device=x.device)
+        mask[:,:,:,:,0] = 0 # mask out the first channel (h)
         ########
         cond_mask = torch.zeros(B, T, L, dtype=int, device=x.device)
         if self.args.sim_condition:

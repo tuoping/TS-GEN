@@ -146,12 +146,13 @@ class EquivariantMDGenWrapper(Wrapper):
             # num_atoms_cond = batch["num_atoms"][:, ::self.args.cond_interval]
             # cond_mask = (mask != 0)[:,::self.args.cond_interval]
             cond_mask[:, ::self.args.cond_interval] = 1
+        cond_mask = (cond_mask*(mask!=0)) # only keep the AND set of cond_mask and mask
         if self.args.potential_model:
             return {
                 "species": species,
                 "latents": latents,
                 'loss_mask': v_loss_mask,
-                "E": batch["e_now"],
+                "E": batch["e_mace"],
                 'model_kwargs': {
                     "aatype": species,
                     "cell": batch["cell"],
@@ -166,7 +167,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 'loss_mask': v_loss_mask,
                 'model_kwargs': {
                     "x1": batch['x_next'],
-                    'v_mask': v_loss_mask,
+                    'v_mask': (v_loss_mask!=0).to(int),
                     "aatype": batch['species_next'],
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
@@ -184,7 +185,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 "E": batch["e_now"],
                 'model_kwargs': {
                     "x1": latents,
-                    'v_mask': v_loss_mask,
+                    'v_mask': (v_loss_mask!=0).to(int),
                     "aatype": species,
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],

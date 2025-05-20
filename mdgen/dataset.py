@@ -274,12 +274,17 @@ def calculate_rdf_pair(
 
     return r_values, g_r, integral_g_r
 
+# from mace.calculators import MACECalculator
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __init__(self, traj_dirname, cutoff, num_frames=None, random_starting_point=True, localmask=False, sim_condition=True, stage="train"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
-        self.max_num_edges = 4000
+        # self.calculator = MACECalculator(
+        #     model_path="./MACE-matpes-r2scan-omat-ft.model",
+        #     device="cuda",
+        #     default_dtype="float32",
+        # )
         self.cutoff = cutoff
         self.traj_filenames = []
         self.traj_initial = []
@@ -295,7 +300,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 elif stage == "val":
                     criterion = (k%3 > 1)
                 elif stage == "save":
-                    self.traj_filenames.append(os.path.join(traj_dirname, f"testing-{u1}-{k}.extxyz"))
+                    self.traj_filenames.append(os.path.join(traj_dirname, f"output-testing-{u1}-{k}.extxyz"))
                     criterion = False
                 else:
                     raise Exception(f"Wrong stage str {stage}")
@@ -330,11 +335,11 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 if len(atoms) != num_atoms:
                     print("Traj filename", self.traj_filenames[idx])
                     raise Exception("Atoms length mismatch", len(atoms), num_atoms)
-            dataset_g_r= []
-            for atoms in atoms_list:
-                r_, g_r, integral_g_r = calculate_rdf_pair(atoms.positions, atoms.positions, atoms.get_volume(), self.cutoff, 0.1, cell=atoms.cell, pbc=True)
-                dataset_g_r.append(torch.from_numpy(np.stack([r_, g_r])))
-            torch.save(dataset_g_r, f'data/CrCoNi_data/RDF-{idx}.pt')
+            # dataset_g_r= []
+            # for atoms in atoms_list:
+            #     r_, g_r, integral_g_r = calculate_rdf_pair(atoms.positions, atoms.positions, atoms.get_volume(), self.cutoff, 0.1, cell=atoms.cell, pbc=True)
+            #     dataset_g_r.append(torch.from_numpy(np.stack([r_, g_r])))
+            # torch.save(dataset_g_r, f'data/CrCoNi_data/RDF-{idx}.pt')
 
             mask = torch.ones((num_atoms,), dtype=torch.float32)
             v_mask = torch.ones((num_atoms, 3), dtype=torch.float32)               
@@ -345,6 +350,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             atom_encoder.fit(unique_numbers.reshape(-1, 1))
             start_i_traj = 0
             end_i_traj = len(atoms_list)
+            
             dataset = []
             for atoms in atoms_list[start_i_traj:end_i_traj]:
                 inv_cell = np.linalg.pinv(np.array(atoms.cell))
@@ -352,7 +358,26 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 padded_z = np.zeros((num_atoms, 5))
                 padded_z[:, :z.shape[1]] = z
                 num_atoms = len(atoms)
-
+                if torch.rand(1) < 0.1:
+                    atoms.positions += np.random.normal(0, 0.1, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.2:
+                    atoms.positions += np.random.normal(0, 0.05, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.3:
+                    atoms.positions += np.random.normal(0, 0.15, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.4:
+                    atoms.positions += np.random.normal(0, 0.2, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.5:
+                    atoms.positions += np.random.normal(0, 0.25, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.6:
+                    atoms.positions += np.random.normal(0, 0.3, size=atoms.positions.shape)
+                elif torch.rand(1) < 0.7:
+                    atoms.positions += np.random.normal(0, 0.5, size=atoms.positions.shape) 
+                elif torch.rand(1) < 0.8:
+                    atoms.positions += np.random.normal(0, 1.0, size=atoms.positions.shape)
+                # atoms.calc = self.calculator
+                # mace_energy = atoms.get_potential_energy()
+                
+                mace_energy = atoms.info["MACE_energy"] + 6568.288013471025 - 3697.2499224365233
                 data = Data(
                     z          = torch.tensor(padded_z,               dtype=torch.float32),
                     pos        = torch.tensor(atoms.positions - np.ones(3)*0.5 @ atoms.cell, dtype=torch.float32),
@@ -364,12 +389,13 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     E_next = torch.tensor(atoms.info["E_next"], dtype=torch.float32),
                     disp = torch.tensor(atoms.arrays["disp"], dtype=torch.float32),
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
+                    E_mace = torch.tensor(mace_energy, dtype=torch.float32),
                 )
                 dataset.append(data.clone())
-            if not os.path.exists("data/CrCoNi_data/"):
-                os.makedirs("data/CrCoNi_data/")
-            torch.save(dataset, f'data/CrCoNi_data/dataset-{idx}.pt')
-            ase.io.write(f"data/CrCoNi_data/initial-{idx}.xyz", atoms_list[0])
+            if not os.path.exists("data/CrCoNi_data/dataset-perturbed"):
+                os.makedirs("data/CrCoNi_data/dataset-perturbed")
+            torch.save(dataset, f'data/CrCoNi_data/dataset-perturbed/dataset-{idx}.pt')
+            ase.io.write(f"data/CrCoNi_data/dataset-perturbed/initial-{idx}.xyz", atoms_list[0])
             return len(dataset)
         else:
             idx_source = self.idx_sources[idx]
@@ -420,7 +446,10 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                 mask = _mask
                 v_mask = _v_mask
                 h_mask = _h_mask
-
+            if hasattr(dataset[0], "E_mace"):
+                e_mace = torch.stack([data.E_mace for data in dataset])
+            else:
+                e_mace = torch.zeros_like(mask)
             if self.sim_condition:
                 return {
                     "idx": idx_source,
@@ -435,13 +464,13 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "v_mask": v_mask,
                     "h_mask": h_mask,
                     "e_now": torch.stack([data.E_now for data in dataset]),
+                    "e_mace": e_mace
                 }
             else:
                 return {
                     "idx": idx_source,
                     "name": "CrCoNi",
                     "species": torch.stack([data.z for data in dataset]),
-                    # "species_next": torch.stack([data.z for data in dataset_next]),
                     "x": torch.stack([data.pos for data in dataset]),
                     "cell": torch.stack([data.cell for data in dataset]),
                     "num_atoms": torch.stack([data.num_atoms for data in dataset]),
@@ -449,6 +478,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "v_mask": v_mask,
                     "h_mask": h_mask,
                     "e_now": torch.stack([data.E_now for data in dataset]),
+                    "e_mace": e_mace
                 }
          
         
