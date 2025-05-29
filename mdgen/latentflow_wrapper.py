@@ -99,7 +99,10 @@ class LatentGenWrapper(Wrapper):
         return {
             "latents": x,
             "loss_mask": mask,
-            "model_kwargs": {}
+            "model_kwargs": {
+                "x1": x,
+                "v_mask": mask > 0,
+            }
         }
     
     def general_step(self, batch, stage='train'):
@@ -172,7 +175,7 @@ class LatentGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_now"]
             logits = samples[..., -5:]
         else:
-            vector_out = samples
+            vector_out = samples*prep['loss_mask'] + prep['latents']*(1-prep["loss_mask"])
 
         if self.args.design:
             aa_out = torch.argmax(logits, -1)

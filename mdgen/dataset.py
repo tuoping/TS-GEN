@@ -404,6 +404,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             # assert _RDF[0].shape == (2,35)
             act_space = torch.from_numpy(np.loadtxt(self.traj_act_space[idx])).to(torch.long)
             LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
+            TKS_reward_pool = torch.stack([data.E_barrier-data.freq*self.kT for data in _dataset])
             if self.random_starting_point:
                 start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames-1, 1)[0]
             else:
@@ -414,27 +415,36 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             dataset = _dataset[start_i_traj:end_i_traj]
             dataset_next = _dataset[start_i_traj+1:end_i_traj+1]
             num_atoms = dataset[0].num_atoms
+            LSS_reward = torch.stack([data.E_now for data in dataset]) # T
             if self.sim_condition:
                 TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
-            else:
-                LSS_reward = torch.stack([data.E_now for data in dataset]) # T
+                
 
             x = torch.stack([data.pos for data in dataset])
             T,L,_ = x.shape
             # log_mask = -LSS_reward - self.partition
             ### Normalize over each trajectory
+            log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
             if self.sim_condition:
-                log_mask = -TKS_reward
-            else:
-                log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+                TKS_log_mask = -TKS_reward - torch.logsumexp(-TKS_reward_pool, dim=0) 
+                
             _mask = torch.exp(log_mask)[:,None] # T,L
             _v_mask = _mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
             _h_mask = _mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
+            if self.sim_condition:
+                _TKS_mask = torch.exp(TKS_log_mask)[:,None]
+                _TKS_v_mask = _TKS_mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+                _TKS_h_mask = _TKS_mask.unsqueeze(-1).expand(-1,-1,5) # T,L,5
+
             if self.localmask:
                 # disp_mask = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
                 mask = torch.ones([T,L])
                 v_mask = torch.ones([T,L,3])
                 h_mask = torch.ones([T,L,5])
+                if self.sim_condition:
+                    TKS_mask = torch.ones([T,L])
+                    TKS_v_mask = torch.ones([T,L,3])
+                    TKS_h_mask = torch.ones([T,L,5])
                 for i_traj in range(start_i_traj, end_i_traj):
                     disp_mask = torch.zeros([L])
                     act_space_i = act_space[i_traj]
@@ -442,10 +452,18 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     mask[i_traj-start_i_traj] = _mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0)
                     h_mask[i_traj-start_i_traj] = _h_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
                     v_mask[i_traj-start_i_traj] = _v_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                    if self.sim_condition:
+                        TKS_mask[i_traj-start_i_traj] = _TKS_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0)
+                        TKS_h_mask[i_traj-start_i_traj] = _TKS_h_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                        TKS_v_mask[i_traj-start_i_traj] = _TKS_v_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
             else:
                 mask = _mask
                 v_mask = _v_mask
                 h_mask = _h_mask
+                if self.sim_condition:
+                    TKS_mask = _TKS_mask
+                    TKS_v_mask = _TKS_v_mask
+                    TKS_h_mask = _TKS_h_mask
             if hasattr(dataset[0], "E_mace"):
                 e_mace = torch.stack([data.E_mace for data in dataset])
             else:
@@ -463,6 +481,9 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "mask": mask,
                     "v_mask": v_mask,
                     "h_mask": h_mask,
+                    "TKS_mask": TKS_mask,
+                    "TKS_v_mask": TKS_v_mask,
+                    "TKS_h_mask": TKS_h_mask,
                     "e_now": torch.stack([data.E_now for data in dataset]),
                     "e_mace": e_mace
                 }
@@ -549,10 +570,12 @@ class LatentDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         idx = idx % len(self.traj_filenames)
 
-        _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+        if os.path.exists(self.traj_filenames[idx]):
+            _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
         _dataset_h = torch.load(self.h_traj_filenames[idx], weights_only=False).squeeze(0)
         _dataset_v = torch.load(self.v_traj_filenames[idx], weights_only=False).squeeze(0)
-        assert _dataset_h.shape[1] == _dataset[0].pos.shape[0], f"dataset_h shape {_dataset_h.shape} should be same as dataset shape {torch.stack([data.pos for data in _dataset]).shape}"
+        if os.path.exists(self.traj_filenames[idx]):
+            assert _dataset_h.shape[1] == _dataset[0].pos.shape[0], f"dataset_h shape {_dataset_h.shape} should be same as dataset shape {torch.stack([data.pos for data in _dataset]).shape}"
 
         if self.random_starting_point:
             start_i_traj = np.random.randint(0, len(_dataset_h)-self.num_frames, 1)[0]
@@ -563,9 +586,10 @@ class LatentDataset(torch.utils.data.Dataset):
         end_i_traj = start_i_traj+self.num_frames
         dataset_h = _dataset_h[start_i_traj:end_i_traj]
         dataset_v = _dataset_v[start_i_traj:end_i_traj]
-        dataset = _dataset[start_i_traj:end_i_traj]
-        # cell_tensor = torch.stack([data.cell for data in dataset]).reshape(self.num_frames, 9) # T,3,3
-        cell = torch.stack([torch.tensor([torch.linalg.norm(data.cell[0]), 
+        if os.path.exists(self.traj_filenames[idx]):
+            dataset = _dataset[start_i_traj:end_i_traj]
+            # cell_tensor = torch.stack([data.cell for data in dataset]).reshape(self.num_frames, 9) # T,3,3
+            cell = torch.stack([torch.tensor([torch.linalg.norm(data.cell[0]), 
                              torch.linalg.norm(data.cell[1]),
                              torch.linalg.norm(data.cell[2]),
                              torch.acos(torch.dot(data.cell[0], data.cell[1])/(torch.linalg.norm(data.cell[0])*torch.linalg.norm(data.cell[1])))/torch.pi*180,
@@ -573,13 +597,19 @@ class LatentDataset(torch.utils.data.Dataset):
                              torch.acos(torch.dot(data.cell[0], data.cell[2])/(torch.linalg.norm(data.cell[0])*torch.linalg.norm(data.cell[2])))/torch.pi*180,
                             ])
                              for data in dataset])
-        
-        return {
-            "name": "CrCoNi_latent",
-            "v": dataset_v,
-            "h": dataset_h,
-            "species": torch.stack([data.z for data in dataset]),
-            "x": torch.stack([data.pos for data in dataset]),
-            'frac_x': torch.stack([data.frac_pos for data in dataset]),
-            "cell": cell,
-        }
+        if os.path.exists(self.traj_filenames[idx]):
+            return {
+                "name": "CrCoNi_latent",
+                "v": dataset_v,
+                "h": dataset_h,
+                "species": torch.stack([data.z for data in dataset]),
+                "x": torch.stack([data.pos for data in dataset]),
+                'frac_x': torch.stack([data.frac_pos for data in dataset]),
+                "cell": cell,
+            }
+        else:
+            return {
+                "name": "CrCoNi_latent_only",
+                "v": dataset_v,
+                "h": dataset_h,
+            }

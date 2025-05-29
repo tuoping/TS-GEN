@@ -79,6 +79,7 @@ class Transport:
             loss_type,
             train_eps,
             sample_eps,
+            score_model = None
     ):
         path_options = {
             PathType.LINEAR: path.ICPlan,
@@ -91,6 +92,7 @@ class Transport:
         self.path_sampler = path_options[path_type]()
         self.train_eps = train_eps
         self.sample_eps = sample_eps
+        self.score_model = score_model
 
     def prior_logp(self, z):
         '''
@@ -165,7 +167,6 @@ class Transport:
         
         ### normal sampler of t
         t, x0, x1 = self.sample(x1)
-        # t, xt, ut = self.path_sampler.plan(t, x0, x1)
         if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
             assert self.model_type == ModelType.VELOCITY
             seq_one_hot = aatype1
@@ -179,8 +180,12 @@ class Transport:
 
             # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
         else:
-            # t, x0, x1 = self.sample(x1)
-            t, xt, ut = self.path_sampler.plan(t, x0, x1)
+            if self.score_model is None:
+                t, xt, ut = self.path_sampler.plan(t, x0, x1)
+            else:
+                t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
+
+            '''
             ## add latent noise using antithetic sampling
             # gamma_t = (0.9*t*(1-t)).sqrt()[:,None,None,None]
             # dt_gamma_t = (0.9/2*(1-2*t)/((t*(1-t)).sqrt()))[:,None,None,None]
@@ -190,10 +195,13 @@ class Transport:
             # ut += dt_gamma_t*x0
             # ut_ = ut.clone()
             # ut_ -= dt_gamma_t*x0
+            '''
         
         B = x1.shape[0]
         assert t.shape == (B,)
         model_output = model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
+        if self.score_model is not None:
+            score_model_output = self.score_model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
             
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)
@@ -213,7 +221,12 @@ class Transport:
                 # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
                 # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
 
-                terms['loss'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
+                terms['loss_flow'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
+                if self.score_model is not None:
+                    terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
+                    terms['loss'] = terms['loss_flow']+terms['loss_score']
+                else:
+                    terms['loss'] = terms['loss_flow']
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
@@ -284,14 +297,21 @@ class Transport:
     ):
         """member function for obtaining score of 
             x_t = alpha_t * x + sigma_t * eps"""
+        
+        def score_sde(x, t, model, **model_kwargs):
+            model_output = model(x, t, **model_kwargs)
+            return model_output
+        
         if self.model_type == ModelType.NOISE:
-            score_fn = lambda x, t, model, **kwargs: model(x, t, **kwargs) / - \
+            score_fn = lambda x, t, model, **model_kwargs: model(x, t, **model_kwargs) / - \
                 self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, x))[0]
         elif self.model_type == ModelType.SCORE:
-            score_fn = lambda x, t, model, **kwagrs: model(x, t, **kwagrs)
+            score_fn = lambda x, t, model, **model_kwargs: model(x, t, **model_kwargs)
         elif self.model_type == ModelType.VELOCITY:
-            score_fn = lambda x, t, model, **kwargs: self.path_sampler.get_score_from_velocity(model(x, t, **kwargs), x,
-                                                                                               t)
+            if self.score_model is None:
+                score_fn = lambda x, t, model, **model_kwargs: self.path_sampler.get_score_from_velocity(model(x, t, **model_kwargs), x, t)
+            else:
+                score_fn = score_sde
         else:
             raise NotImplementedError()
 
@@ -552,6 +572,7 @@ def create_transport(
         loss_weight=None,
         train_eps=None,
         sample_eps=None,
+        score_model=None,
 ):
     """function for creating Transport object
     **Note**: model prediction defaults to velocity
@@ -580,6 +601,7 @@ def create_transport(
         loss_type = WeightType.NONE
 
     path_choice = {
+        "Schrodinger_Linear": PathType.LINEAR,
         "Linear": PathType.LINEAR,
         "GVP": PathType.GVP,
         "VP": PathType.VP,
@@ -604,6 +626,7 @@ def create_transport(
         loss_type=loss_type,
         train_eps=train_eps,
         sample_eps=sample_eps,
+        score_model=score_model
     )
 
     return state

@@ -614,19 +614,21 @@ class TransformerProcessor(nn.Module):
         # v = x[..., 1:]
         return x
     
-    def forward(self, x: Tensor, t: Tensor) -> Tensor:
+    def forward(self, x: Tensor, t: Tensor, x1=None, v_mask=None) -> Tensor:
         B,T,N,D,_ = x.shape
         # h = x[..., 0] 
         # v = x[..., 1:]
+        x = x*v_mask+x1*(~v_mask)
         x = x + self.embed_time(t)[None,None,None,:,None]
         x_out = self.inference(x.reshape(B*T*N,D,4))
         return x_out.reshape(B,T,N,D,4)
 
     
-    def forward_inference(self, x: Tensor, t: Tensor, conditions=None) -> Tensor:
+    def forward_inference(self, x: Tensor, t: Tensor, x1=None, v_mask=None, conditions=None) -> Tensor:
         B,T,N,D,_ = x.shape
         # h = x[..., 0] 
         # v = x[..., 1:]
+        x = x*v_mask+x1*(~v_mask)
         x = x + self.embed_time(t)[None,None,None,:,None]
         x_out = self.inference(x.reshape(B*T*N,D,4))
         return x_out.reshape(B,T,N,D,4)

@@ -24,7 +24,7 @@ if os.path.exists("EXCLUDE_EPOCHS"):
 else:
     exclude_epochs = []
 
-def readlog(dir, trainlosskeyword="train_loss", exclude_epochs=exclude_epochs):
+def readlog(dir, trainlosskeyword="\'train_loss\'", exclude_epochs=exclude_epochs):
     alltrainsteps_baseline = []
     alltrainlosses_baseline = []
     with open(os.path.join(dir, "log.out")) as fp:
@@ -46,31 +46,31 @@ def readlog(dir, trainlosskeyword="train_loss", exclude_epochs=exclude_epochs):
     return alltrainlosses_baseline, alltrainsteps_baseline
 
 
-def plot_1losses(dir_dir_b1024, key="train_loss", after_epoch=None, before_epoch=None):
+def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_epoch=None):
     plt.rcParams["figure.figsize"] = (6,5)
     fig = plt.figure()
     alltrainlosses_dir_b1024, alltrainsteps_dir_b1024 = readlog(dir_dir_b1024, trainlosskeyword=key)
     np.save(key, np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
+    before_idx = None
+    after_idx = None
     if len(alltrainlosses_dir_b1024) != 0:
         if after_epoch is not None and after_epoch != "None":
             after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][-1]
             print("after_idx = ", after_idx)
         if before_epoch is not None and before_epoch != "None":
-            before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][-1]
+            before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][0]
             print("before_idx = ", before_idx)
         
         
     # plt.subplot(121)
-    positive_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])>0)[0]
-    negative_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])<=0)[0]
-    print(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[positive_idx])
-    print(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[negative_idx])
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[positive_idx][::2], np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[positive_idx][::2], label="$L>0$", marker="x")
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_epoch])[negative_idx][::2], -np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[negative_idx][::2], c="r", label="$L<0$", marker="x")
+    positive_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])>0)[0]
+    negative_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])<=0)[0]
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[positive_idx][::2], np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][::2], label="$L>0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx][::2], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx][::2], c="r", label="$L<0$", marker="x")
     if len(positive_idx) > 0:
-        plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[positive_idx][-1], ls="--")
+        plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][-1], ls="--")
     if len(negative_idx) > 0:
-        plt.axhline(-np.array(alltrainlosses_dir_b1024[after_idx:before_epoch])[negative_idx][-1], ls="--", c="r")
+        plt.axhline(-np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx][-1], ls="--", c="r")
     plt.semilogy()
     setfigform_simple("epoch","loss")
     plt.legend()
@@ -87,6 +87,9 @@ if sys.argv[2] == "None":
     before_epoch = None
 else:
     before_epoch = int(sys.argv[2])
-# plot_3losses(dir, after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 plot_1losses(dir, after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
-plot_1losses(dir, key="val_loss", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'val_loss\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+# plot_1losses(dir, key="\'train_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+# plot_1losses(dir, key="\'val_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+# plot_1losses(dir, key="\'train_loss_score\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+# plot_1losses(dir, key="\'val_loss_score\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)

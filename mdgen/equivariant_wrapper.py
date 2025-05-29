@@ -40,9 +40,11 @@ class EquivariantMDGenWrapper(Wrapper):
             num_vector_out=1
             latent_dim = 3
         
+        encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1)
+        processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim)
         self.model = EquivariantTransformer_dpm(
-            encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
-            processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim),
+            encoder = encoder,
+            processor = processor,
             decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
             cutoff=args.cutoff,
             latent_dim=latent_dim,
@@ -50,13 +52,27 @@ class EquivariantMDGenWrapper(Wrapper):
             design=args.design,
             potential_model = args.potential_model
         )
+        if args.path_type == "Schrodinger_Linear":
+            self.score_model = EquivariantTransformer_dpm(
+                encoder = encoder,
+                processor = processor,
+                decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
+                cutoff=args.cutoff,
+                latent_dim=latent_dim,
+                embed_dim=args.embed_dim,
+                design=args.design,
+                potential_model = args.potential_model
+            )
+        else:
+            self.score_model = None
 
         self.transport = create_transport(
             args,
             args.path_type,
             args.prediction,
             train_eps=1e-5,
-            sample_eps=1e-5
+            sample_eps=1e-5,
+            score_model=self.score_model
         )
         self.transport_sampler = Sampler(self.transport)
 
@@ -119,34 +135,27 @@ class EquivariantMDGenWrapper(Wrapper):
         # rdf = batch["RDF"]
         B, T, L, num_elem = species.shape
 
-        mask = batch["mask"]
-        # h_loss_mask = batch["h_mask"]
         v_loss_mask = batch["v_mask"]
-        # if self.args.design:
-        #     loss_mask = torch.cat([h_loss_mask, v_loss_mask], -1)
-        # else:
-        #     loss_mask = v_loss_mask
 
 
         B, T, L, _ = latents.shape
         assert _ == 3, f"latents shape should be (B, T, D, 3), but got {latents.shape}"
         ########
-        cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
+        
         if self.args.sim_condition:
+            cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
             # x_cond = x_now[:,0]
             # species_cond = species[:,0].unsqueeze(1)
             # cell_cond = batch["cell"][:,0]
             # num_atoms_cond = batch["num_atoms"][:,0]
             # cond_mask = (mask != 0)[:,0]
             cond_mask[:, 0] = 1
-        if self.args.cond_interval:
-            # x_cond = x_now[:, ::self.args.cond_interval]
-            # species_cond = species[:, ::self.args.cond_interval]
-            # cell_cond = batch["cell"][:,::self.args.cond_interval]
-            # num_atoms_cond = batch["num_atoms"][:, ::self.args.cond_interval]
-            # cond_mask = (mask != 0)[:,::self.args.cond_interval]
-            cond_mask[:, ::self.args.cond_interval] = 1
-        cond_mask = (cond_mask*(mask!=0)) # only keep the AND set of cond_mask and mask
+            if self.stage == "inference":
+                conditional_batch = True
+            else:
+                conditional_batch = torch.rand(1)[0] >= 0.9
+            cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
+        
         if self.args.potential_model:
             return {
                 "species": species,
@@ -160,14 +169,14 @@ class EquivariantMDGenWrapper(Wrapper):
                     "conditions": None
                 }
             }
-        elif self.args.sim_condition or self.args.cond_interval:
+        elif (self.args.sim_condition and conditional_batch):
             return {
                 "species": batch['species_next'],
                 "latents": batch['x_next'],
-                'loss_mask': v_loss_mask,
+                'loss_mask': batch["TKS_v_mask"],
                 'model_kwargs': {
                     "x1": batch['x_next'],
-                    'v_mask': (v_loss_mask!=0).to(int),
+                    'v_mask': (batch["TKS_v_mask"]!=0).to(int),
                     "aatype": batch['species_next'],
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
@@ -220,6 +229,9 @@ class EquivariantMDGenWrapper(Wrapper):
             self.log('model_dur', time.time() - start)
             loss = out_dict['loss']
             self.log('loss', loss)
+            if self.score_model is not None:
+                self.log("loss_flow", out_dict['loss_flow'])
+                self.log("loss_score", out_dict['loss_score'])
 
             self.log('time', out_dict['t'])
 
@@ -232,8 +244,8 @@ class EquivariantMDGenWrapper(Wrapper):
         return loss.mean()
 
 
-    def inference(self, batch):
-
+    def inference(self, batch, stage='inference'):
+        self.stage = stage
         prep = self.prep_batch(batch)
 
         latents = prep['latents']
@@ -258,8 +270,10 @@ class EquivariantMDGenWrapper(Wrapper):
         else:
             zs = torch.randn(B, T, N, D, device=self.device)
 
-        sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)  # default to ode
-        # sample_fn = self.transport_sampler.sample_sde(sampling_method=self.args.sampling_method, num_steps=self.args.inference_steps)  # default to ode
+        if self.score_model is None:
+            sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)  # default to ode
+        else:
+            sample_fn = self.transport_sampler.sample_sde(num_steps=self.args.inference_steps, diffusion_form=self.args.diffusion_form, diffusion_norm=torch.tensor(3))
 
         samples = sample_fn(
             zs,

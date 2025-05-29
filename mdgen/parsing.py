@@ -97,7 +97,7 @@ def parse_train_args():
     group.add_argument('--abs_time_emb', action='store_true')
 
     group = parser.add_argument_group("Transport arguments")
-    group.add_argument("--path-type", type=str, default="GVP", choices=["Linear", "GVP", "VP"])
+    group.add_argument("--path-type", type=str, default="GVP", choices=["Linear", "GVP", "VP", "Schrodinger_Linear"])
     group.add_argument("--prediction", type=str, default="velocity", choices=["velocity", "score", "noise"])
     group.add_argument("--sampling_method", type=str, default="dopri5", choices=["dopri5", "euler"])
     group.add_argument('--alpha_max', type=float, default=8)
@@ -131,6 +131,9 @@ def parse_train_args():
     ## nonequil. simulation settings
     group.add_argument('--localmask', action='store_true')
     group.add_argument('--potential_model', action='store_true')
+
+    ## SDE bridge settings
+    group.add_argument("--inference_steps", type=int, default=20)
 
     args = parser.parse_args()
     os.environ["MODEL_DIR"] = os.path.join("workdir", args.run_name)
