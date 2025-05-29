@@ -30,7 +30,7 @@ class DecoderWrapper(Wrapper):
         num_vector_out = 1
         
         self.model = TransformerDecoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out,      
-                                 nhead=4, 
+                                 nhead=args.num_heads, 
                                  dim_feedforward=1024,
                                  activation='gelu',
                                  dropout=0.0,
