@@ -586,7 +586,7 @@ class LatentDataset(torch.utils.data.Dataset):
 
 
 class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
-    def __init__(self, traj_filename, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None):
+    def __init__(self, traj_filename, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None, save_filename = None):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         # self.calculator = MACECalculator(
@@ -605,12 +605,6 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
 
         if self.stage == "save":
             atoms_list = ase.io.read(traj_filename, index=":")
-            num_atoms = len(atoms_list[0])
-            for atoms in atoms_list: 
-                remove_element(atoms)
-                atoms.wrap()
-                if len(atoms) != num_atoms:
-                    raise Exception("Atoms length mismatch", len(atoms), num_atoms)           
 
             # Onehot encoder for atom type
             # unique_numbers = np.concatenate([np.unique(atoms.numbers) for atoms in atoms_list])        
@@ -621,6 +615,8 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
             
             dataset = []
             for atoms in atoms_list[start_i_traj:end_i_traj]:
+                num_atoms = len(atoms)
+                atoms.wrap()   
                 inv_cell = np.linalg.pinv(np.array(atoms.cell))
                 z = atom_encoder.transform(atoms.numbers.reshape(-1, 1))
                 padded_z = np.zeros((num_atoms, num_species))
@@ -639,9 +635,8 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
                 )
                 dataset.append(data.clone())
-
-            torch.save(dataset, f'{save_dir}/{stage}.pt')
-            return len(dataset)
+            os.makedirs(save_dir, exist_ok=True)
+            torch.save(dataset, f'{save_dir}/{save_filename}.pt')
         else:
             self.all_dataset = torch.load(traj_filename, weights_only=False)
 
@@ -652,7 +647,6 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         idx = idx % len(self.all_dataset)
         dataset = [self.all_dataset[idx]]
-        num_atoms = dataset.num_atoms
 
         x = torch.stack([data.pos for data in dataset])
         T,L,_ = x.shape
@@ -671,8 +665,6 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
             mask = _mask
             v_mask = _v_mask
             h_mask = _h_mask
-
-
 
         return {
             "name": "Material Project",
