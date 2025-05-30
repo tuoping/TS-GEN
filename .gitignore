@@ -8,4 +8,4 @@ slurm-*
 mdgen/__pycache__
 *.log
 *.xyz
-notebooks/check*
+misc_notebooks/check*
