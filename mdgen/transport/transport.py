@@ -153,6 +153,7 @@ class Transport:
             x1,           # target tokens
             aatype1=None, # target aatype
             mask=None,
+            num_species=5,
             model_kwargs=None
     ):
         """Loss for training the score model
@@ -207,8 +208,8 @@ class Transport:
         assert model_output.size() == (B, *xt.size()[1:-1], C)
 
         if self.args.design:
-            logits = model_output[:, :, :, -5:]
-            model_output = model_output[:, :, :, :-5]
+            logits = model_output[:, :, :, -num_species:]
+            model_output = model_output[:, :, :, :-num_species]
 
         terms = {}
         terms['t'] = t
@@ -249,7 +250,7 @@ class Transport:
 
         if self.args.design:
             terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
-            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,5), aatype1.reshape(-1,5).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
+            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,num_species), aatype1.reshape(-1,num_species).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
             terms['loss'] = mean_flat(loss_d, mask)
             terms['loss_discrete'] = loss_d
             terms['logits'] = logits

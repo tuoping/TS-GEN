@@ -26,11 +26,11 @@ class LatentGenWrapper(Wrapper):
             if not hasattr(args, key):
                 setattr(args, key, False)
 
-        num_scalar_out = 5
+        num_scalar_out = self.args.num_species
         num_vector_out= 1 
 
         self.model = TransformerProcessor(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out,      
-                                 nhead=4, 
+                                 nhead=args.num_heads, 
                                  dim_feedforward=1024,
                                  activation='gelu',
                                  dropout=0.0,
@@ -119,7 +119,7 @@ class LatentGenWrapper(Wrapper):
             x1=prep['latents'],
             aatype1=None,
             mask=prep['loss_mask'],
-            model_kwargs=None
+            model_kwargs=prep["model_kwargs"],
         )
         self.log('model_dur', time.time() - start)
         loss = out_dict['loss']
@@ -144,14 +144,14 @@ class LatentGenWrapper(Wrapper):
         B, T, N, D, K = latents.shape
 
         if self.args.design:
-            # zs_continuous = torch.randn(B, T, N, self.latent_dim - 5, device=latents.device)
-            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, 5, device=latents.device)).sample()
+            # zs_continuous = torch.randn(B, T, N, self.latent_dim - self.args.num_species, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, self.args.num_species, device=latents.device)).sample()
             zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
             # zs = torch.cat([zs_continuous, zs_discrete], -1)
             zs = zs_discrete
 
             x1 = prep['latents']
-            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], 20, device=self.device)
+            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], self.args.num_species, device=self.device)
             xt = torch.cat([x1, x_d], dim=-1)
             logits = self.model.forward_inference(xt, torch.ones(B, device=self.device),
                                                   **prep['model_kwargs'])
@@ -171,9 +171,9 @@ class LatentGenWrapper(Wrapper):
         )[-1]
         
         if self.args.design:
-            # vector_out = samples[..., :-5]
+            # vector_out = samples[..., :-self.args.num_species]
             vector_out = prep["model_kwargs"]["x_now"]
-            logits = samples[..., -5:]
+            logits = samples[..., -self.args.num_species:]
         else:
             vector_out = samples*prep['loss_mask'] + prep['latents']*(1-prep["loss_mask"])
 

@@ -28,9 +28,9 @@ class EquivariantMDGenWrapper(Wrapper):
         
         num_species = args.num_species
         if args.design:
-            num_scalar_out = 5
+            num_scalar_out = self.args.num_species
             num_vector_out=0
-            latent_dim = 5
+            latent_dim = self.args.num_species
         elif args.potential_model:
             num_scalar_out = 1
             latent_dim = 3
@@ -109,7 +109,7 @@ class EquivariantMDGenWrapper(Wrapper):
 
 
         B, T, L, _ = latents.shape
-        assert _ == 5, f"latents shape should be (B, T, D, 5), but got {latents.shape}"
+        assert _ == self.args.num_species, f"latents shape should be (B, T, D, self.args.num_species), but got {latents.shape}"
         ########
         cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
         if self.args.sim_condition:
@@ -252,14 +252,14 @@ class EquivariantMDGenWrapper(Wrapper):
         B, T, N, D = latents.shape
 
         if self.args.design:
-            # zs_continuous = torch.randn(B, T, N, self.latent_dim - 5, device=latents.device)
-            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, 5, device=latents.device)).sample()
+            # zs_continuous = torch.randn(B, T, N, self.latent_dim - self.args.num_species, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, self.args.num_species, device=latents.device)).sample()
             zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
             # zs = torch.cat([zs_continuous, zs_discrete], -1)
             zs = zs_discrete
 
             x1 = prep['latents']
-            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], 20, device=self.device)
+            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], self.args.num_species, device=self.device)
             xt = torch.cat([x1, x_d], dim=-1)
             logits = self.model.forward_inference(xt, torch.ones(B, device=self.device),
                                                   **prep['model_kwargs'])
@@ -281,9 +281,9 @@ class EquivariantMDGenWrapper(Wrapper):
         )[-1]
         
         if self.args.design:
-            # vector_out = samples[..., :-5]
+            # vector_out = samples[..., :-self.args.num_species]
             vector_out = prep["model_kwargs"]["x_now"]
-            logits = samples[..., -5:]
+            logits = samples[..., -self.args.num_species:]
         else:
             vector_out = samples*prep["loss_mask"] + prep["latents"]*(1-prep["loss_mask"])
 

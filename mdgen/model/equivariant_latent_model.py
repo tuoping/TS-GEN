@@ -25,7 +25,7 @@ class Encoder(nn.Module):
         self.edge_dim      = edge_dim
         
         # self.embed_atom = nn.Embedding(num_species, node_dim)
-        self.embed_atom = nn.Linear(5, node_dim)
+        self.embed_atom = nn.Linear(self.num_species, node_dim)
         self.embed_bond = MLP([init_edge_dim, edge_dim, edge_dim], act=nn.SiLU())
         self.phi_s = MLP([node_dim*2 + edge_dim, edge_dim, node_dim], act=nn.SiLU())
         self.phi_h = MLP([node_dim*2,            edge_dim, node_dim], act=nn.SiLU())
@@ -100,21 +100,22 @@ class Processor(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int) -> None:
+    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int, num_species = 5) -> None:
         super().__init__()
         self.dim = dim
         self.num_scalar_out = num_scalar_out
         self.num_vector_out = num_vector_out
         self.Oh = nn.Parameter(torch.randn(dim, num_scalar_out))
         self.Ov = nn.Parameter(torch.randn(dim, num_vector_out))
+        self.num_species = num_species
 
     def forward(self, h:Tensor, v: Tensor) -> Tensor:
         h_ = h @ self.Oh
         v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
         # return h_out, v_out.squeeze()
-        if h_.shape[-1] >= 5:
-            h_out_1 = h_[...,:-5]
-            h_out_2 = torch.nn.functional.softmax(h_[...,-5:], dim=-1)
+        if h_.shape[-1] >= self.num_species:
+            h_out_1 = h_[...,:-self.num_species]
+            h_out_2 = torch.nn.functional.softmax(h_[...,-self.num_species:], dim=-1)
             return torch.hstack([h_out_1, h_out_2]), v_out.squeeze()
         else:
             return h_, v_out.squeeze()
@@ -169,7 +170,7 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     return emb
 
 class EquivariantTransformer_dpm(EquivariantTransformer):
-    def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False, potential_model=False, abs_time_emb=False, num_frames=None):
+    def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False, potential_model=False, abs_time_emb=False, num_frames=None, num_species=5):
         super().__init__(encoder, processor, decoder)
         self.cutoff = cutoff
         self.otf_graph = otf_graph
@@ -188,6 +189,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                                  nn.Parameter(torch.zeros(1, num_frames, embed_dim), requires_grad=False))
             time_embed = get_1d_sincos_pos_embed_from_grid(self.time_embed.shape[-1], np.arange(num_frames))
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
+        
+        self.num_species = num_species
 
     def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, out_cond=None,) -> Tuple[Tensor, Tensor]:
         h, v, edge_attr = self.encoder(species, edge_index, edge_attr, edge_vec, t)
@@ -200,7 +203,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             # edge_attr_cond = torch.hstack([edge_vec_cond, edge_len_cond.view(-1, 1)])
             # species_cond = out_cond["species"]
             # h_cond, v_cond, edge_attr_cond = self.encoder(
-            #     species_cond.view(-1,5), 
+            #     species_cond.view(-1,self.num_species), 
             #     edge_index_cond, edge_attr_cond, edge_vec_cond, 
             #     torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
             #     )
@@ -273,9 +276,9 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = aatype
         else:
             aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
+            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species, dtype=torch.float)
             
-        h, v, edge_attr = self.encoder(species.reshape(-1,5), edge_index, edge_attr, edge_vec, t.reshape(-1,1))
+        h, v, edge_attr = self.encoder(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1))
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return h, v
     
@@ -342,9 +345,9 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = aatype
         else:
             aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
+            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species, dtype=torch.float)
             
-        h, v, edge_attr = self.encoder(species.reshape(-1,5), edge_index, edge_attr, edge_vec, t.reshape(-1,1))
+        h, v, edge_attr = self.encoder(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1))
         
         return h, v, edge_attr
 
@@ -441,10 +444,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = aatype
         else:
             aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=5, dtype=torch.float)
+            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species, dtype=torch.float)
             
         
-        scaler_out, vector_out = self._graph_forward(species.reshape(-1,5), edge_index, edge_attr, edge_vec, t.reshape(-1,1), conditions)
+        scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), conditions)
         if self.design:
             # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
             return scaler_out.view(B, T, N, -1)
@@ -504,7 +507,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
     
 
 class TransformerDecoder(nn.Module):
-    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int,
+    def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int, 
+                 num_species: int=5,
                  nhead: int=4, 
                  dim_feedforward: int=1024,
                  activation: str='gelu',
@@ -514,6 +518,7 @@ class TransformerDecoder(nn.Module):
                  num_layers: int = 6,
                  ) -> None:
         super().__init__()
+        self.num_species = num_species
         self.dim = dim
         self.num_scalar_out = num_scalar_out
         self.num_vector_out = num_vector_out
@@ -553,8 +558,8 @@ class TransformerDecoder(nn.Module):
         v_frac_out = torch.einsum('ndi, df -> nfi', v, self.Ov_frac)
         x = x.reshape(B*T,N,-1,4)
         l_out = torch.einsum('ndi, dif -> nf', x.mean(1), self.Ol)
-        assert h_.shape[-1] == 5
-        h_out = torch.nn.functional.softmax(h_[...,-5:], dim=-1)
+        assert h_.shape[-1] == self.num_species
+        h_out = torch.nn.functional.softmax(h_[...,-self.num_species:], dim=-1)
         return {
             "aatype": h_out.reshape(B, T, N, -1), 
             "pos": v_out.squeeze().reshape(B, T, N, -1), 

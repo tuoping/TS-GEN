@@ -26,7 +26,7 @@ class DecoderWrapper(Wrapper):
             if not hasattr(args, key):
                 setattr(args, key, False)
         
-        num_scalar_out = 5
+        num_scalar_out = self.args.num_species
         num_vector_out = 1
         
         self.model = TransformerDecoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out,      
@@ -81,7 +81,7 @@ class DecoderWrapper(Wrapper):
 
 
         B, T, L, _ = latents.shape
-        assert _ == 5, f"latents shape should be (B, T, D, 5), but got {latents.shape}"
+        assert _ == self.args.num_species, f"latents shape should be (B, T, D, self.args.num_species), but got {latents.shape}"
         ########
         cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
         if self.args.sim_condition:
@@ -129,7 +129,7 @@ class DecoderWrapper(Wrapper):
         start = time.time()
         B,T,N,_ = prep["h"].shape
         out_dict = self.model(prep["h"], prep["v"])
-        L_aa = torch.nn.functional.cross_entropy(out_dict['aatype'].reshape(-1,5), prep['species'].reshape(-1,5).to(out_dict['aatype'].device).argmax(dim=-1), reduction='none').reshape(B,T,N).mean(dim=-1).mean(dim=-1)
+        L_aa = torch.nn.functional.cross_entropy(out_dict['aatype'].reshape(-1,self.args.num_species), prep['species'].reshape(-1,self.args.num_species).to(out_dict['aatype'].device).argmax(dim=-1), reduction='none').reshape(B,T,N).mean(dim=-1).mean(dim=-1)
         out_dict["pos"] -= out_dict["pos"].mean(dim=2, keepdim=True)
         batch["x"] -= batch["x"].mean(dim=2, keepdim=True)
         L_x = torch.nn.functional.mse_loss(out_dict['pos'], batch['x'], reduction='none').mean(dim=-1).mean(dim=-1).mean(dim=-1)
@@ -162,14 +162,14 @@ class DecoderWrapper(Wrapper):
         B, T, N, D = latents.shape
 
         if self.args.design:
-            # zs_continuous = torch.randn(B, T, N, self.latent_dim - 5, device=latents.device)
-            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, 5, device=latents.device)).sample()
+            # zs_continuous = torch.randn(B, T, N, self.latent_dim - self.args.num_species, device=latents.device)
+            zs_discrete = torch.distributions.Dirichlet(torch.ones(B, N, self.args.num_species, device=latents.device)).sample()
             zs_discrete = zs_discrete[:, None].expand(-1, T, -1, -1)
             # zs = torch.cat([zs_continuous, zs_discrete], -1)
             zs = zs_discrete
 
             x1 = prep['latents']
-            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], 20, device=self.device)
+            x_d = torch.zeros(x1.shape[0], x1.shape[1], x1.shape[2], self.args.num_species, device=self.device)
             xt = torch.cat([x1, x_d], dim=-1)
             logits = self.model.forward_inference(xt, torch.ones(B, device=self.device),
                                                   **prep['model_kwargs'])
@@ -189,9 +189,9 @@ class DecoderWrapper(Wrapper):
         )[-1]
         
         if self.args.design:
-            # vector_out = samples[..., :-5]
+            # vector_out = samples[..., :-self.args.num_species]
             vector_out = prep["model_kwargs"]["x_now"]
-            logits = samples[..., -5:]
+            logits = samples[..., -self.args.num_species:]
         else:
             vector_out = samples
 
