@@ -587,7 +587,8 @@ class LatentDataset(torch.utils.data.Dataset):
             }
         
 
-from .utils import Stiffness_from_modulus
+import ase.io
+import spglib
 
 class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
     def __init__(self, traj_dir, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None, save_filename = None, material_type="Ceramics"):
@@ -621,7 +622,23 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
             atom_encoder.fit(np.arange(1, num_species+1)[:,np.newaxis])
             
             dataset = []
-            for i_atoms, atoms in enumerate(atoms_list):
+            os.makedirs(save_dir, exist_ok=True)
+            if os.path.exists(f'{save_dir}/conventional.extxyz'): os.remove(f'{save_dir}/conventional.extxyz')
+            for i_atoms, _atoms in enumerate(atoms_list):
+                lattice   = _atoms.get_cell().array
+                positions = _atoms.get_scaled_positions()
+                numbers   = _atoms.get_atomic_numbers()
+                cell_spg  = (lattice, positions, numbers)
+                (conv_lattice, conv_positions, conv_numbers) = spglib.standardize_cell(cell_spg,
+                               to_primitive=False,
+                               no_idealize=False)
+                atoms = Atoms(
+                    numbers=conv_numbers,
+                    scaled_positions=conv_positions,
+                    cell=conv_lattice,
+                    pbc=True
+                )
+                ase.io.write(f'{save_dir}/conventional.extxyz', atoms, append=True)
                 num_atoms = len(atoms)
                 atoms.wrap()   
                 # masses = atoms.get_masses()
@@ -645,7 +662,7 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                     # masses = torch.tensor(masses)
                 )
                 dataset.append(data.clone())
-            os.makedirs(save_dir, exist_ok=True)
+            
             torch.save(dataset, f'{save_dir}/{save_filename}.pt')
         else:
             self.all_dataset = torch.load(os.path.join(traj_dir, f"{stage}.pt"), weights_only=False)

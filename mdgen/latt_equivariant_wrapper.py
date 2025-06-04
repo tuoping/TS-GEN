@@ -139,7 +139,7 @@ class LattEquivariantMDGenWrapper(Wrapper):
         v_loss_mask = batch["v_mask"]
         cell = batch["cell"]
         length_prior_cell = torch.pow((cell[:,:,0,:]*torch.cross(cell[:,:,1,:], cell[:,:,2,:], dim=-1)).sum(dim=-1), 1./3.)
-        prior_cell = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1))*length_prior_cell[:,:,None,None]
+        prior_cell = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1).to(cell.device))*length_prior_cell[:,:,None,None]
 
         B, T, L, _ = latents.shape
         assert _ == 3, f"latents shape should be (B, T, D, 3), but got {latents.shape}"
@@ -233,7 +233,7 @@ class LattEquivariantMDGenWrapper(Wrapper):
             loss = loss_energy
             self.log('loss', loss)
         else:
-            out_dict = self.transport.training_losses(
+            out_dict = self.transport.training_losses_lattpath(
                 model=self.model,
                 x1=prep['latents'],
                 aatype1=batch['species'],
@@ -243,6 +243,7 @@ class LattEquivariantMDGenWrapper(Wrapper):
             self.log('model_dur', time.time() - start)
             loss = out_dict['loss']
             self.log('loss', loss)
+            self.log('loss_cell', out_dict['loss_cell'])
             if self.score_model is not None:
                 self.log("loss_flow", out_dict['loss_flow'])
                 self.log("loss_score", out_dict['loss_score'])

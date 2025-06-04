@@ -4,8 +4,8 @@ from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
 import torch, os
-from mdgen.dataset import EquivariantTransformerDataset_CrCoNi
-from mdgen.equivariant_wrapper import EquivariantMDGenWrapper
+from mdgen.dataset import EquivariantTransformerDataset_MaterialProject
+from mdgen.latt_equivariant_wrapper import LattEquivariantMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 import pytorch_lightning as pl
 
@@ -26,12 +26,14 @@ class ResetLrCallback(pl.Callback):
 
 torch.set_float32_matmul_precision('medium')
 
-trainset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, sim_condition=args.sim_condition, stage="train")
+args.num_species = 94
+args.inference_steps = 50
+trainset = EquivariantTransformerDataset_MaterialProject("data/MP_LixSiy_data/", 6, num_species=94, localmask=False, sim_condition=False, stage="train")
 
 if args.overfit:
     valset = trainset    
 else:
-    valset = EquivariantTransformerDataset_CrCoNi(traj_dirname=args.data_dir, cutoff=args.cutoff, num_frames=args.num_frames, localmask=args.localmask, sim_condition=args.sim_condition, stage="val")
+    valset = EquivariantTransformerDataset_MaterialProject("data/MP_LixSiy_data/", 6, num_species=94, localmask=False, sim_condition=False, stage="val")
 
 train_loader = torch.utils.data.DataLoader(
     trainset,
@@ -45,10 +47,8 @@ val_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size,
     num_workers=args.num_workers,
 )
-model = EquivariantMDGenWrapper(args)
-# checkpoint = torch.load(args.ckpt, weights_only=False)
-# model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
-# model.load_state_dict(checkpoint["state_dict"])
+model = LattEquivariantMDGenWrapper(args)
+
 
 trainer = pl.Trainer(
     accelerator="gpu" if torch.cuda.is_available() else 'auto',

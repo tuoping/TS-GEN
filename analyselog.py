@@ -89,6 +89,8 @@ else:
     before_epoch = int(sys.argv[2])
 plot_1losses(dir, after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 plot_1losses(dir, key="\'val_loss\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'train_loss_cell\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'val_loss_cell\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'train_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'val_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'train_loss_score\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)

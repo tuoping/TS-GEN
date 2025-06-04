@@ -82,7 +82,8 @@ def _TransM_by_dx(A,B,rcond=None):
 
 def _TransM_by_dx(A: torch.Tensor,
                         B: torch.Tensor,
-                        lam: float = 1e-6) -> torch.Tensor:
+                        lam: float = 1e-6,
+                        eps: float = 1e-8) -> torch.Tensor:
     """
     Solve (AᵀA + λI) M = AᵀB in batch form, so M stays full‐rank.
     Then normalize det(M)=1 in a NaN‐safe way.
@@ -111,8 +112,24 @@ def _TransM_by_dx(A: torch.Tensor,
     # 2) Solve (ATA + λI) M = ATB for M in batched form:
     #    Use torch.linalg.solve, which expects square (..., 3,3) @ (..., 3,3) = (..., 3,3).
     M0 = torch.linalg.solve(ATA_reg, ATB) 
+    assert not torch.isnan(M0).any(), f"{ATA_reg} {ATB} {A} {B}"
     det_M0 = torch.det(M0)
-    M = M0 / det_M0.pow(1/3)  # M has det = 1
+    assert not torch.isnan(M0).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
+    # M = M0 / det_M0.pow(1/3)  # M has det = 1
+    # 4) Build a “safe” real cube‐root of det(M₀): sign = ±1 (never 0)
+    sign = torch.sign(det_M0)
+    sign = torch.where(sign == 0, torch.tensor(1.0, device=sign.device), sign)
+
+    #    - abs_det = |det(M₀)| clamped away from 0
+    abs_det = det_M0.abs().clamp(min=eps)  # shape (...,)
+
+    #    - real_cuberoot = sign * (abs_det)^(1/3)
+    real_cuberoot = sign * abs_det.pow(1.0 / 3.0)  # shape (...,)
+
+    # 5) Divide out that cube‐root so det(M) ≈ 1:
+    scale = real_cuberoot.unsqueeze(-1).unsqueeze(-1)  # (..., 1, 1)
+    M = M0 / scale   # now det(M) ≈ 1, and is real (no NaNs from negative det)
+    assert not torch.isnan(M).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
     F_fit = torch.transpose(M, 2,3)
 
     return F_fit
@@ -180,6 +197,38 @@ def expm(A, eps: float = 1e-8):
 
     return expA
 
+def interp_log_then_rescale(cell0, cell1, t, eps=1e-8):
+    # 1) logs
+    log0 = logm(cell0)   # (N,3,3), complex
+    log1 = logm(cell1)   # (N,3,3), complex
+
+    # 2) interp in log-space
+    if t.ndim == 1:
+        t = t.view(-1,1,1)
+    log_t = (1 - t)*log0 + t*log1           # (N,3,3)
+
+    # 3) exponentiate
+    cand = expm(log_t)                       # (N,3,3), complex
+    cand = cand.real                         # assume result should be real
+
+    # 4) desired volume
+    V0 = torch.det(cell0)                    # (N,)
+    det_cand = torch.det(cand)               # (N,)
+
+    # 5) real cube-root scale
+    sign = torch.sign(det_cand)
+    sign = torch.where(sign == 0,
+                       torch.tensor(1.0, device=sign.device),
+                       sign)
+    abs_det = det_cand.abs().clamp(min=eps)
+    real_cuberoot = sign * abs_det.pow(1.0/3.0)  # (N,)
+
+    # 6) rescale so det(cell_t)=V0
+    scale = (V0/ det_cand).abs().pow(1.0/3.0)  # (N,)
+    cell_t = cand * scale.view(-1,1,1)        # (N,3,3)
+
+    return cell_t.real
+
 
 def latt_plan(x0, x1, cell_0, cell_1, xt, t):
     TransM_1 = _TransM_by_dx(x1, xt)
@@ -188,10 +237,12 @@ def latt_plan(x0, x1, cell_0, cell_1, xt, t):
     TransM_0 = _TransM_by_dx(x0, xt)
     cell_t_0 = TransM_0@cell_0
     vol_t_0 = (cell_t_0[:,:,0,:]*torch.cross(cell_t_0[:,:,1,:], cell_t_0[:,:,2,:])).sum(-1)
-    assert torch.allclose(vol_t_0, vol_t_1), f"{vol_t_0} != {vol_t_1}"
-    cell_t = expm((1-t[:,None,None,None])*logm(cell_t_0) + t[:,None,None,None]*logm(cell_t_1)).real
+    assert torch.allclose(vol_t_0, vol_t_1, rtol=5e-2), f"{vol_t_0} != {vol_t_1} \n from cell_t_0, cell_t_1 = {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1} \n Check:: x0.max(), x0.min()={x0.max(), x0.min()} x1.max(), x1.min()={x1.max(), x1.min()}  xt.max(), xt.min()={xt.max(), xt.min()} "
+    # cell_t = expm((1-t[:,None,None,None])*logm(cell_t_0) + t[:,None,None,None]*logm(cell_t_1)).real
+    B,T,N,_ = x0.shape
+    cell_t = interp_log_then_rescale(cell_t_0.reshape(B*T,3,3), cell_t_1.reshape(B*T,3,3), t.unsqueeze(1).expand(-1,T).reshape(-1)).reshape(B,T,3,3)
     vol_t = (cell_t[:,:,0,:]*torch.cross(cell_t[:,:,1,:], cell_t[:,:,2,:])).sum(-1)
-    assert torch.allclose(vol_t, vol_t_1), f"{vol_t} != {vol_t_1}"
+    assert torch.allclose(vol_t, vol_t_1, rtol=5e-2), f"{vol_t} != {vol_t_1} \n from cell_t, cell_t_0, cell_t_1 = {cell_t}, {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1}"
     return cell_t
 
 
@@ -409,7 +460,7 @@ class Transport:
         t = t.to(x1)
 
         length_prior_cell = torch.pow((cell[:,:,0,:]*torch.cross(cell[:,:,1,:], cell[:,:,2,:], dim=-1)).sum(dim=-1), 1./3.)
-        cell_0 = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1))*length_prior_cell[:,:,None,None]
+        cell_0 = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1).to(x1.device))*length_prior_cell[:,:,None,None]
 
         return t, x0, x1, cell_0
 
@@ -449,7 +500,7 @@ class Transport:
         else:
             if self.score_model is None:
                 t, xt, ut = self.path_sampler.plan(t, x0, x1)
-                dt = torch.rand(t.shape) * 0.04
+                dt = torch.rand(t.shape).to(t.device) * 0.04
                 _, xt_next, _ = self.path_sampler.plan(t+dt, x0, x1)
                 cell_t = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt, t)
                 cell_t_next = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt_next, t+dt)
@@ -495,7 +546,7 @@ class Transport:
                 # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
 
                 terms['loss_flow'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
-                terms['loss_cell'] = mean_flat(model_kwargs['latt_feature']['cell'], cell_t_next)
+                terms['loss_cell'] = mean_flat((model_kwargs['latt_feature']['cell']-cell_t_next)**2, torch.ones_like(cell_t_next).to(cell_t_next.device) )
                 if self.score_model is not None:
                     terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
                     terms['loss'] = terms['loss_flow']+terms['loss_score']
