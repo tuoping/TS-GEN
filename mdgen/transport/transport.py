@@ -68,6 +68,135 @@ def divergence(v_func, x, t, model_kwarg):
         div += torch.autograd.grad(v[..., i].sum(), x, create_graph=True)[0][..., i]
     return div 
 
+'''
+def _TransM_by_dx(A,B,rcond=None):
+    # M = torch.linalg.lstsq(A, B, rcond=None)[0].T
+    ## Normalize
+    M0 = torch.linalg.lstsq(A, B, rcond=rcond).solution
+    det_M0 = torch.det(M0)
+    M = M0 / det_M0.pow(1/3)  # M has det = 1
+    F_fit = torch.transpose(M, 2,3)
+
+    return F_fit
+'''
+
+def _TransM_by_dx(A: torch.Tensor,
+                        B: torch.Tensor,
+                        lam: float = 1e-6) -> torch.Tensor:
+    """
+    Solve (AᵀA + λI) M = AᵀB in batch form, so M stays full‐rank.
+    Then normalize det(M)=1 in a NaN‐safe way.
+    
+    Args:
+      A    Tensor of shape (..., 3, 3)
+      B    Tensor of shape (..., 3, 3)
+      lam  small regularization constant (λ > 0)
+    
+    Returns:
+      F_fit  Tensor of shape (..., 3, 3), which is Mᵀ after det‐normalization
+    """
+    # 1) Build AᵀA + λI, and AᵀB in batch form.
+    #    If A is (..., 3, 3), then:
+    AT = A.transpose(-2, -1)                 # shape (..., 3, 3)
+    ATA = AT @ A                             # shape (..., 3, 3)
+    
+    # Add λI:
+    # We want to do ATA + λ * I for each batch. The easiest is to create an identity of size 3×3,
+    # then broadcast-add λ·I to every “slice” of ATA.
+    I3 = torch.eye(3, device=A.device).expand(ATA.shape)  # shape (..., 3, 3)
+    ATA_reg = ATA + lam * I3
+    
+    ATB = AT @ B                             # shape (..., 3, 3)
+    
+    # 2) Solve (ATA + λI) M = ATB for M in batched form:
+    #    Use torch.linalg.solve, which expects square (..., 3,3) @ (..., 3,3) = (..., 3,3).
+    M0 = torch.linalg.solve(ATA_reg, ATB) 
+    det_M0 = torch.det(M0)
+    M = M0 / det_M0.pow(1/3)  # M has det = 1
+    F_fit = torch.transpose(M, 2,3)
+
+    return F_fit
+
+
+def logm(A, eps: float = 1e-8):
+    """
+    Compute the principal matrix logarithm of a (batched) square matrix A via eigendecomposition,
+    avoiding NaNs by clamping each eigenvalue’s magnitude away from zero.
+
+    Args:
+        A: Tensor of shape (..., N, N), real or complex.
+        eps: Small floor for |eig| to avoid log(0).
+
+    Returns:
+        logA: Tensor of shape (..., N, N), complex if A had any non‐positive/complex eigenvalues.
+    """
+    # 1) Compute eigenvalues/eigenvectors (possibly complex)
+    eigvals, eigvecs = torch.linalg.eig(A)
+    # eigvals: (..., N), complex dtype
+    # eigvecs: (..., N, N), complex dtype
+
+    # 2) Clamp the magnitude |eigvals| to be >= eps, but keep the original phase
+    abs_eig = torch.abs(eigvals)                       # (..., N) real ≥ 0
+    phase = torch.atan2(eigvals.imag, eigvals.real)     # (..., N) real (angle in radians)
+    abs_clamped = abs_eig.clamp(min=eps)                # (..., N) real
+    eigvals_safe = abs_clamped * torch.exp(1j * phase)  # (..., N) complex
+
+    # 3) Take the complex logarithm of each (clamped) eigenvalue
+    log_eig = torch.log(eigvals_safe)                   # (..., N) complex
+
+    # 4) Reconstruct:  logA = V @ diag(log_eig) @ V⁻¹
+    V = eigvecs                                         # (..., N, N) complex
+    V_inv = torch.linalg.inv(V)                         # (..., N, N) complex
+    logD = torch.diag_embed(log_eig)                     # (..., N, N) complex
+    logA = V @ (logD @ V_inv)                            # (..., N, N) complex
+
+    return logA
+
+def expm(A, eps: float = 1e-8):
+    """
+    Compute the matrix exponential of a (batched) square matrix A via eigendecomposition.
+    If A is real but has complex eigenvalues, this returns a complex‐dtype tensor.
+
+    Args:
+        A: Tensor of shape (..., N, N), real or complex.
+        eps: (Unused here, but kept for API symmetry with logm_torch.)
+
+    Returns:
+        expA: Tensor of shape (..., N, N), same dtype as A (possibly complex).
+    """
+    # 1) Compute eigenvalues/eigenvectors (possibly complex)
+    eigvals, eigvecs = torch.linalg.eig(A)
+    # eigvals: (..., N), complex dtype
+    # eigvecs: (..., N, N), complex dtype
+
+    # 2) Exponentiate each eigenvalue
+    exp_eig = torch.exp(eigvals)                        # (..., N) complex
+
+    # 3) Reconstruct:  exp(A) = V @ diag(exp_eig) @ V⁻¹
+    V = eigvecs                                         # (..., N, N) complex
+    V_inv = torch.linalg.inv(V)                         # (..., N, N) complex
+    expD = torch.diag_embed(exp_eig)                     # (..., N, N) complex
+    expA = V @ (expD @ V_inv)                            # (..., N, N) complex
+
+    return expA
+
+
+def latt_plan(x0, x1, cell_0, cell_1, xt, t):
+    TransM_1 = _TransM_by_dx(x1, xt)
+    cell_t_1 = TransM_1@cell_1
+    vol_t_1 = (cell_t_1[:,:,0,:]*torch.cross(cell_t_1[:,:,1,:], cell_t_1[:,:,2,:])).sum(-1)
+    TransM_0 = _TransM_by_dx(x0, xt)
+    cell_t_0 = TransM_0@cell_0
+    vol_t_0 = (cell_t_0[:,:,0,:]*torch.cross(cell_t_0[:,:,1,:], cell_t_0[:,:,2,:])).sum(-1)
+    assert torch.allclose(vol_t_0, vol_t_1), f"{vol_t_0} != {vol_t_1}"
+    cell_t = expm((1-t[:,None,None,None])*logm(cell_t_0) + t[:,None,None,None]*logm(cell_t_1)).real
+    vol_t = (cell_t[:,:,0,:]*torch.cross(cell_t[:,:,1,:], cell_t[:,:,2,:])).sum(-1)
+    assert torch.allclose(vol_t, vol_t_1), f"{vol_t} != {vol_t_1}"
+    return cell_t
+
+
+from torch_linear_assignment import batch_linear_assignment
+
 class Transport:
 
     def __init__(
@@ -257,6 +386,149 @@ class Transport:
 
         return terms
 
+    def sample_latt(self, x1, cell):
+        """Sampling x0 & t based on shape of x1 (if needed)
+          Args:
+            x1 - data point; [batch, *dim]
+        """
+        # x0 = th.fmod(th.randn_like(x1)@(cell/2.0), cell/2.0)
+        frac_x0 = (th.randn_like(x1)/2) % 1 - 0.5
+        _x0 = frac_x0@cell 
+        # _, indices = torch.sort(torch.abs(_x0), dim=1)
+        # x0 = torch.gather(_x0, dim=1, index=indices)
+        B,T,N,_ = x1.shape
+        x0 = th.zeros_like(_x0)
+        # for i in range(B):
+        for j in range(T):
+            dist_mat = (x1[:,j].unsqueeze(2)-_x0[:,j].unsqueeze(1)).norm(dim=-1)
+            assignment = batch_linear_assignment(dist_mat)
+            for i in range(B):
+              x0[i,j] = _x0[i,j,assignment[i]]
+        t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
+        t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
+        t = t.to(x1)
+
+        length_prior_cell = torch.pow((cell[:,:,0,:]*torch.cross(cell[:,:,1,:], cell[:,:,2,:], dim=-1)).sum(dim=-1), 1./3.)
+        cell_0 = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1))*length_prior_cell[:,:,None,None]
+
+        return t, x0, x1, cell_0
+
+    def training_losses_lattpath(
+            self,
+            model,
+            x1,           # target tokens
+            aatype1=None, # target aatype
+            mask=None,
+            num_species=5,
+            model_kwargs=None,
+    ):
+        """Loss for training the score model
+        Args:
+        - model: backbone model; could be score, noise, or velocity
+        - x1: datapoint
+        - model_kwargs: additional arguments for the model
+        """
+
+        if model_kwargs == None:
+            model_kwargs = {}
+        
+        ### normal sampler of t
+        t, x0, x1, cell_0 = self.sample_latt(x1, model_kwargs['cell'])
+        if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
+            assert self.model_type == ModelType.VELOCITY
+            seq_one_hot = aatype1
+            ### exponential sampler of t
+            # exponential_dist = torch.distributions.Exponential(1.0)
+            # t = exponential_dist.sample((seq_one_hot.shape[0],)).to(seq_one_hot.device).float()
+            alphas, _ = t_to_alpha(t, self.args)
+            alphas = torch.ones_like(seq_one_hot) + seq_one_hot * (alphas[:, None, None, None] - torch.ones_like(seq_one_hot))
+            x_d = th.distributions.Dirichlet(alphas).sample()
+            xt = x_d
+
+            # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
+        else:
+            if self.score_model is None:
+                t, xt, ut = self.path_sampler.plan(t, x0, x1)
+                dt = torch.rand(t.shape) * 0.04
+                _, xt_next, _ = self.path_sampler.plan(t+dt, x0, x1)
+                cell_t = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt, t)
+                cell_t_next = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt_next, t+dt)
+                model_kwargs['latt_feature']['dt'] = dt
+                model_kwargs['latt_feature']['cell'] = cell_t
+            else:
+                t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
+
+            '''
+            ## add latent noise using antithetic sampling
+            # gamma_t = (0.9*t*(1-t)).sqrt()[:,None,None,None]
+            # dt_gamma_t = (0.9/2*(1-2*t)/((t*(1-t)).sqrt()))[:,None,None,None]
+            # xt += gamma_t*x0
+            # xt_ = xt.clone()
+            # xt_ -= gamma_t*x0
+            # ut += dt_gamma_t*x0
+            # ut_ = ut.clone()
+            # ut_ -= dt_gamma_t*x0
+            '''
+        
+        B = x1.shape[0]
+        assert t.shape == (B,)
+        model_output = model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
+        if self.score_model is not None:
+            score_model_output = self.score_model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
+            
+        B, *_, C = xt.shape
+        assert model_output.size() == (B, *xt.size()[1:-1], C)
+
+        if self.args.design:
+            logits = model_output[:, :, :, -num_species:]
+            model_output = model_output[:, :, :, :-num_species]
+
+        terms = {}
+        terms['t'] = t
+        terms['pred'] = model_output
+        if not (self.args.design):
+            if self.model_type == ModelType.VELOCITY:
+                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)
+
+                # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
+                # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
+                # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
+
+                terms['loss_flow'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
+                terms['loss_cell'] = mean_flat(model_kwargs['latt_feature']['cell'], cell_t_next)
+                if self.score_model is not None:
+                    terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
+                    terms['loss'] = terms['loss_flow']+terms['loss_score']
+                else:
+                    terms['loss'] = terms['loss_flow']
+            else:
+                _, drift_var = self.path_sampler.compute_drift(xt, t)
+                sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
+                if self.loss_type in [WeightType.VELOCITY]:
+                    weight = (drift_var / sigma_t) ** 2
+                elif self.loss_type in [WeightType.LIKELIHOOD]:
+                    weight = drift_var / (sigma_t ** 2)
+                elif self.loss_type in [WeightType.NONE]:
+                    weight = 1
+                else:
+                    raise NotImplementedError()
+
+                if self.model_type == ModelType.NOISE:
+                    terms['loss'] = mean_flat(weight * ((model_output - x0) ** 2), mask)
+                else:
+                    terms["loss_continuous"]=(weight * ((model_output * sigma_t + x0) ** 2)*mask)
+                    terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask) # loss by comparing the x_0
+
+        # more changes for dirichlet flow matching
+
+        if self.args.design:
+            terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
+            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,num_species), aatype1.reshape(-1,num_species).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
+            terms['loss'] = mean_flat(loss_d, mask)
+            terms['loss_discrete'] = loss_d
+            terms['logits'] = logits
+
+        return terms
 
     def get_drift(
             self

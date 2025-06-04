@@ -169,6 +169,17 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     emb = np.concatenate([emb_sin, emb_cos], axis=1)  # (M, D)
     return emb
 
+
+def _TransM_by_dx(A,B,rcond=None):
+    # M = torch.linalg.lstsq(A, B, rcond=None)[0].T
+    ## Normalize
+    M0 = torch.linalg.lstsq(A, B, rcond=rcond).solution
+    det_M0 = torch.det(M0)
+    M = M0 / det_M0.pow(1/3)  # M has det = 1
+    F_fit = torch.transpose(M, 2,3)
+
+    return F_fit
+
 class EquivariantTransformer_dpm(EquivariantTransformer):
     def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False, potential_model=False, abs_time_emb=False, num_frames=None, num_species=5):
         super().__init__(encoder, processor, decoder)
@@ -213,7 +224,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         return self.decoder(h, v)
 
     
-    def get_processed_var(self, x: Tensor, t: Tensor, 
+    def _get_processed_var(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 conditions=None, 
@@ -282,7 +293,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return h, v
     
-    def get_encoded_var(self, x: Tensor, t: Tensor, 
+    def _get_encoded_var(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 conditions=None, 
@@ -359,10 +370,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         if self.design:
             x_ = x_latt
             aatype_ = x
-            scaler_out = self.get_encoded_var(x_, t, cell, num_atoms, conditions, aatype_)
+            scaler_out = self._get_encoded_var(x_, t, cell, num_atoms, conditions, aatype_)
             return scaler_out
         else:
-            vector_out = self.get_encoded_var(x, t, cell, num_atoms, conditions, aatype)
+            vector_out = self._get_encoded_var(x, t, cell, num_atoms, conditions, aatype)
             return vector_out
         
 
@@ -374,17 +385,17 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         if self.design:
             x_ = x_latt
             aatype_ = x
-            scaler_out = self.get_processed_var(x_, t, cell, num_atoms, conditions, aatype_)
+            scaler_out = self._get_processed_var(x_, t, cell, num_atoms, conditions, aatype_)
             return scaler_out
         else:
-            vector_out = self.get_processed_var(x, t, cell, num_atoms, conditions, aatype)
+            vector_out = self._get_processed_var(x, t, cell, num_atoms, conditions, aatype)
             return vector_out
     
     def inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 conditions=None, 
-                aatype=None):
+                aatype=None, latt_feature=None):
         assert cell is not None
         B, T, N, _ = x.shape
         assert t.shape == (B,)
@@ -454,19 +465,24 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         elif self.potential_model:
             return scaler_out.reshape(B, T, N, -1)
         else:
+            if latt_feature is not None:
+                x_next = x + vector_out.reshape(B, T, N, -1)*latt_feature['dt']
+                TransM = _TransM_by_dx(x, x_next)
+                latt_feature["cell"] = TransM@latt_feature["cell"]
+
             return vector_out.reshape(B, T, N, -1)
         
     def forward(self, x: Tensor, t: Tensor, 
                 cell=None, 
                 num_atoms=None,
                 conditions=None,
-                aatype=None, x_latt=None, x1=None, v_mask=None):
+                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
         if self.design:
             x_ = x_latt
             aatype_ = x
             if not self.potential_model:
                 x_ = x_*v_mask+x1*(~v_mask)
-            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
             if not self.potential_model:
                 return scaler_out*v_mask
             else:
@@ -474,7 +490,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         else:
             if not self.potential_model:
                 x = x*v_mask+x1*(~v_mask)
-            vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            if latt_feature is not None:
+                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
+            else:
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype, latt_feature)
             if not self.potential_model:
                 return vector_out*v_mask
             else:
@@ -484,13 +503,13 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 cell=None, 
                 num_atoms=None,
                 conditions=None,
-                aatype=None, x_latt=None, x1=None, v_mask=None):
+                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
         if self.design:
             x_ = x_latt
             aatype_ = x
             if not self.potential_model:
                 x_ = x_*v_mask+x1*(~v_mask)
-            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
             if not self.potential_model:
                 return scaler_out*v_mask
             else:
@@ -499,7 +518,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         else:
             if not self.potential_model:
                 x = x*v_mask+x1*(~v_mask)
-            vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            if latt_feature is not None:
+                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
+            else:
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype, latt_feature)
             if not self.potential_model:
                 return vector_out*v_mask
             else:

@@ -99,3 +99,189 @@ def prots_to_pdb(prots):
         ss += '\nENDMDL\n'
     return ss
 
+
+def _low_symm_couplings(material_type, min_coupling):
+    if material_type == "Metals":
+        weak_coupling = min([80, min_coupling])
+    elif material_type == "Ceramics":
+        weak_coupling = min([200, min_coupling])
+    elif material_type == "Polymers":
+        weak_coupling = min([1, min_coupling])
+    else:
+        raise ValueError(f"Wrong material_type {material_type}, supposed be \'Metals\' or \'Ceramics\' or \'Polymers\'")
+    C14 = np.random.normal(loc=0, scale=0.1*weak_coupling)
+    return C14
+
+
+def Stiffness_from_modulus(SGn, bulk_dict, shear_dict, material_type="Metals"):
+    match material_type:
+        case "Metals":
+            min_coupling = 80
+            if bulk_dict is None:
+                C11 = np.random.normal(200, 0.1*200)
+                C12 = np.random.normal(100, 0.1*100)
+                C44 = np.random.normal(60, 0.1*80)
+
+        case "Ceramics":
+            min_coupling = 200
+            if bulk_dict is None:
+                C11 = np.random.normal(400, 0.1*400)
+                C12 = np.random.normal(200, 0.1*200)
+                C44 = np.random.normal(175, 0.1*150)
+
+        case "Polymers":
+            min_coupling = 1
+            if bulk_dict is None:
+                C11 = np.random.normal(5.5, 0.1*9)
+                C12 = np.random.normal(5.1/2, 0.1*4.9)
+                C44 = np.random.normal(3.1/2, 0.1*2.9)
+        case _:
+            raise ValueError(f"Wrong material_type {material_type}, supposed be \'Metals\' or \'Ceramics\' or \'Polymers\'")
+    if bulk_dict is not None:
+        bulk = bulk_dict["voigt"]
+        shear = shear_dict["voigt"]
+        mu_ = shear
+        lambda_ = bulk-2./3.*shear
+        C11 = lambda_ + 2*mu_
+        C12 = lambda_
+        C44 = mu_
+
+    stiffness_matrix = np.zeros([6,6])
+    stiffness_matrix[0,0] = C11
+    stiffness_matrix[1,1] = C11
+    stiffness_matrix[2,2] = C11
+    stiffness_matrix[0,1] = C12
+    stiffness_matrix[0,2] = C12
+    stiffness_matrix[1,2] = C12
+    stiffness_matrix[3,3] = C44
+    stiffness_matrix[4,4] = C44
+    stiffness_matrix[5,5] = C44
+    if SGn < 3:
+        # raise ValueError(f"Triclinic SGn = {SGn}")
+        C55 = np.random.rand()*(C11-C12) + C12
+        C66 = np.random.rand()*(C11-C12) + C12
+        C33 = np.random.normal(loc=C11)
+        C23 = np.random.normal(loc=C12)
+        C13 = np.random.normal(loc=C12)
+        # min_coupling = min([C11, C12, C33, C23, C13, C55, C66, C44])
+        C14 = _low_symm_couplings(material_type, min_coupling)
+        C15 = _low_symm_couplings(material_type, min_coupling)
+        C24 = _low_symm_couplings(material_type, min_coupling)
+        C25 = _low_symm_couplings(material_type, min_coupling)
+        C34 = _low_symm_couplings(material_type, min_coupling)
+        C35 = _low_symm_couplings(material_type, min_coupling)
+        C45 = _low_symm_couplings(material_type, min_coupling)
+        C46 = _low_symm_couplings(material_type, min_coupling)
+        
+        # C12
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C23
+        stiffness_matrix[0,3] = C14
+        stiffness_matrix[0,4] = C15
+        stiffness_matrix[1,3] = C24
+        stiffness_matrix[1,4] = C25
+        stiffness_matrix[2,3] = C34
+        stiffness_matrix[2,4] = C35
+        stiffness_matrix[3,4] = C45
+        stiffness_matrix[3,5] = C46
+        # C44
+        stiffness_matrix[4,4] = C55
+        stiffness_matrix[5,5] = C66
+        pass
+    elif 3 <= SGn < 16:
+        # "Monoclinic"
+        C55 = np.random.rand()*(C11-C12) + C12
+        C66 = np.random.rand()*(C11-C12) + C12
+        C33 = np.random.normal(loc=C11)
+        C23 = np.random.normal(loc=C12)
+        C13 = np.random.normal(loc=C12)
+        # min_coupling = min([C11, C12, C33, C23, C13, C55, C66, C44])
+        C15 = _low_symm_couplings(material_type, min_coupling)
+        C25 = _low_symm_couplings(material_type, min_coupling)
+        C35 = _low_symm_couplings(material_type, min_coupling)
+        C46 = _low_symm_couplings(material_type, min_coupling)
+        stiffness_matrix[2,2] = C33
+        # C12
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C23
+        stiffness_matrix[0,4] = C15
+        stiffness_matrix[1,4] = C25
+        stiffness_matrix[2,4] = C35
+        stiffness_matrix[3,5] = C46
+        # C44
+        stiffness_matrix[4,4] = C55
+        stiffness_matrix[5,5] = C66
+        pass
+    elif 16 <= SGn < 75:
+        # "Orthorhombic"
+        C55 = np.random.rand()*(C11-C12) + C12
+        C66 = np.random.rand()*(C11-C12) + C12
+        C33 = np.random.normal(loc=C11)
+        C23 = np.random.normal(loc=C12)
+        C13 = np.random.normal(loc=C12)
+        stiffness_matrix[2,2] = C33
+        # C12
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C23
+        # C44
+        stiffness_matrix[4,4] = C55
+        stiffness_matrix[5,5] = C66
+        pass
+    elif 89 <= SGn < 105 or 107 <= SGn < 111:
+        # "Tetragonal"
+        C66 = (C11-C12)/2
+        C33 = np.random.normal(loc=C11)
+        C13 = np.random.normal(loc=C12)
+        # min_coupling = min([C11, C12, C33, C13, C66, C44])
+        C16 = _low_symm_couplings(material_type, min_coupling)
+        stiffness_matrix[2,2] = C33
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C13
+        stiffness_matrix[5,5] = C66
+        stiffness_matrix[0,5] = C16
+    elif 75 <= SGn < 89 or 105 <= SGn < 107 or 111 <= SGn < 143:
+        # "Tetragonal"
+        C66 = (C11-C12)/2
+        C33 = np.random.normal(loc=C11)
+        C13 = np.random.normal(loc=C12)
+        stiffness_matrix[2,2] = C33
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C13
+        stiffness_matrix[5,5] = C66
+        pass
+    elif 143 <= SGn < 168:
+        # "Trigonal"
+        C66 = (C11-C12)/2
+        C33 = np.random.normal(loc=C11)
+        C13 = np.random.normal(loc=C12)
+        # min_coupling = min([C11, C12, C33, C13, C66, C44])
+        C14 = _low_symm_couplings(material_type, min_coupling)
+        stiffness_matrix[2,2] = C33
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C13
+        stiffness_matrix[5,5] = C66
+        stiffness_matrix[0,3] = C14
+        stiffness_matrix[1,3] = -C14
+        stiffness_matrix[4,5] = C14
+        pass
+    elif 168 <= SGn < 195:
+        # "Hexagonal"
+        C66 = (C11-C12)/2
+        C33 = np.random.normal(loc=C11)
+        C13 = np.random.normal(loc=C12)
+        stiffness_matrix[2,2] = C33
+        stiffness_matrix[0,2] = C13
+        stiffness_matrix[1,2] = C13
+        stiffness_matrix[5,5] = C66
+        pass
+    elif 195 <= SGn < 231:
+        # "Cubic"
+        pass
+    else:
+        raise ValueError(f"Invalid space group number: {SGn} (must be 1-230)")
+    
+    for i in range(6):
+        for j in range(i+1,6):
+            stiffness_matrix[j,i] = stiffness_matrix[i,j]
+
+    return stiffness_matrix

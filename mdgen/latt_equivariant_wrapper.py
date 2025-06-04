@@ -17,7 +17,7 @@ from torch import Tensor
 from typing import List, Optional, Tuple
 from .transport.transport import create_transport, Sampler
 
-class EquivariantMDGenWrapper(Wrapper):
+class LattEquivariantMDGenWrapper(Wrapper):
     def __init__(self, args):
         super().__init__(args)
         for key in [
@@ -50,7 +50,8 @@ class EquivariantMDGenWrapper(Wrapper):
             latent_dim=latent_dim,
             embed_dim=args.embed_dim,
             design=args.design,
-            potential_model = args.potential_model
+            potential_model = args.potential_model,
+            num_species = args.num_species
         )
         if args.path_type == "Schrodinger_Linear":
             self.score_model = EquivariantTransformer_dpm(
@@ -61,7 +62,8 @@ class EquivariantMDGenWrapper(Wrapper):
                 latent_dim=latent_dim,
                 embed_dim=args.embed_dim,
                 design=args.design,
-                potential_model = args.potential_model
+                potential_model = args.potential_model,
+                num_species = args.num_species
             )
         else:
             self.score_model = None
@@ -132,11 +134,12 @@ class EquivariantMDGenWrapper(Wrapper):
     def prep_batch_x(self, batch):
         species = batch["species"]
         latents = batch["x"]
-        # rdf = batch["RDF"]
         B, T, L, num_elem = species.shape
 
         v_loss_mask = batch["v_mask"]
-
+        cell = batch["cell"]
+        length_prior_cell = torch.pow((cell[:,:,0,:]*torch.cross(cell[:,:,1,:], cell[:,:,2,:], dim=-1)).sum(dim=-1), 1./3.)
+        prior_cell = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1))*length_prior_cell[:,:,None,None]
 
         B, T, L, _ = latents.shape
         assert _ == 3, f"latents shape should be (B, T, D, 3), but got {latents.shape}"
@@ -153,7 +156,7 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                conditional_batch = torch.rand(1)[0] >= 0.7
+                conditional_batch = torch.rand(1)[0] >= 0.9
             cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
         
         if self.args.potential_model:
@@ -166,7 +169,11 @@ class EquivariantMDGenWrapper(Wrapper):
                     "aatype": species,
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
-                    "conditions": None
+                    "conditions": None,
+                    "latt_feature": {
+                        "cell": prior_cell,
+                        'dt': 1./self.args.inference_steps
+                    }
                 }
             }
         elif (self.args.sim_condition and conditional_batch):
@@ -183,6 +190,10 @@ class EquivariantMDGenWrapper(Wrapper):
                     "conditions": {
                         'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
                         "mask": cond_mask,
+                    },
+                    "latt_feature": {
+                        "cell": prior_cell,
+                        'dt': 1./self.args.inference_steps
                     }
                 }
             }
@@ -197,7 +208,11 @@ class EquivariantMDGenWrapper(Wrapper):
                     "aatype": species,
                     "cell": batch["cell"],
                     "num_atoms": batch["num_atoms"],
-                    "conditions": None
+                    "conditions": None,
+                    "latt_feature": {
+                        "cell": prior_cell,
+                        'dt': 1./self.args.inference_steps
+                    }
                 }
             }
     

@@ -470,13 +470,16 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             else:
                 e_mace = torch.zeros_like(mask)
             if self.sim_condition:
+                # disp_next = [get_distances(dataset[i].pos, dataset_next[i].pos, dataset[i].cell, pbc=True)[0].diagonal().T for i in range(len(dataset))]
+                disp_next = [torch.from_numpy(np.array([get_distances(dataset[i].pos[j], dataset_next[i].pos[j], dataset[i].cell, pbc=True)[0][0][0] for j in range(len(dataset[i].pos))])).to(torch.float32) for i in range(len(dataset))]
+                x_next = [dataset[i].pos + disp_next[i] for i in range(len(dataset))]
                 return {
                     "idx": idx_source,
                     "name": "CrCoNi",
                     "species": torch.stack([data.z for data in dataset]),
                     "species_next": torch.stack([data.z for data in dataset_next]),
                     "x": torch.stack([data.pos for data in dataset]),
-                    'x_next': torch.stack([data.pos for data in dataset_next]),
+                    'x_next': torch.stack(x_next).to(torch.float32),
                     "cell": torch.stack([data.cell for data in dataset]),
                     "num_atoms": torch.stack([data.num_atoms for data in dataset]),
                     "mask": mask,
@@ -584,9 +587,10 @@ class LatentDataset(torch.utils.data.Dataset):
             }
         
 
+from .utils import Stiffness_from_modulus
 
 class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
-    def __init__(self, traj_filename, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None, save_filename = None):
+    def __init__(self, traj_dir, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None, save_filename = None, material_type="Ceramics"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         # self.calculator = MACECalculator(
@@ -604,19 +608,23 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
         self.sim_condition = sim_condition
 
         if self.stage == "save":
+            traj_filename = os.path.join(traj_dir, "all_structures.extxyz")
             atoms_list = ase.io.read(traj_filename, index=":")
-
+            # import json
+            # bulk_modulus = json.load(open(os.path.join(traj_dir, "bulk_modulus_all_structures.json")))
+            # shear_modulus = json.load(open(os.path.join(traj_dir, "shear_modulus_all_structures.json")))
+            # SGnumber = np.loadtxt(os.path.join(traj_dir, "SGnumber_all_structures.txt")).astype(int)
+            
             # Onehot encoder for atom type
             # unique_numbers = np.concatenate([np.unique(atoms.numbers) for atoms in atoms_list])        
             atom_encoder = OneHotEncoder(sparse_output=False)
             atom_encoder.fit(np.arange(1, num_species+1)[:,np.newaxis])
-            start_i_traj = 0
-            end_i_traj = len(atoms_list)
             
             dataset = []
-            for atoms in atoms_list[start_i_traj:end_i_traj]:
+            for i_atoms, atoms in enumerate(atoms_list):
                 num_atoms = len(atoms)
                 atoms.wrap()   
+                # masses = atoms.get_masses()
                 inv_cell = np.linalg.pinv(np.array(atoms.cell))
                 z = atom_encoder.transform(atoms.numbers.reshape(-1, 1))
                 padded_z = np.zeros((num_atoms, num_species))
@@ -624,7 +632,7 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                 num_atoms = len(atoms)
                 # atoms.calc = self.calculator
                 # mace_energy = atoms.get_potential_energy()
-
+                # stiffness = Stiffness_from_modulus(SGnumber[i_atoms], bulk_modulus[i_atoms], shear_modulus[i_atoms], material_type)
                 data = Data(
                     z          = torch.tensor(padded_z,               dtype=torch.float32),
                     pos        = torch.tensor(atoms.positions - np.ones(3)*0.5 @ atoms.cell, dtype=torch.float32),
@@ -633,12 +641,14 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                     E_formation = None,
                     E_above_hull = None,
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
+                    # stiffness = torch.tensor(stiffness, dtype=torch.float32),
+                    # masses = torch.tensor(masses)
                 )
                 dataset.append(data.clone())
             os.makedirs(save_dir, exist_ok=True)
             torch.save(dataset, f'{save_dir}/{save_filename}.pt')
         else:
-            self.all_dataset = torch.load(traj_filename, weights_only=False)
+            self.all_dataset = torch.load(os.path.join(traj_dir, f"{stage}.pt"), weights_only=False)
 
     
     def __len__(self):

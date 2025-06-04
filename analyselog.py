@@ -65,8 +65,8 @@ def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_e
     # plt.subplot(121)
     positive_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])>0)[0]
     negative_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])<=0)[0]
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[positive_idx][::2], np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][::2], label="$L>0$", marker="x")
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx][::2], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx][::2], c="r", label="$L<0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[positive_idx], np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx], label="$L>0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx], c="r", label="$L<0$", marker="x")
     if len(positive_idx) > 0:
         plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][-1], ls="--")
     if len(negative_idx) > 0:
