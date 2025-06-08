@@ -53,6 +53,7 @@ class LattEquivariantMDGenWrapper(Wrapper):
             potential_model = args.potential_model,
             num_species = args.num_species
         )
+
         if args.path_type == "Schrodinger_Linear":
             self.score_model = EquivariantTransformer_dpm(
                 encoder = encoder,
@@ -67,7 +68,19 @@ class LattEquivariantMDGenWrapper(Wrapper):
             )
         else:
             self.score_model = None
-
+        '''
+        self.potential_model = EquivariantTransformer_dpm(
+            encoder = encoder,
+            processor = processor,
+            decoder = Decoder(dim=args.embed_dim, num_scalar_out=1, num_vector_out=0),
+            cutoff=args.cutoff,
+            latent_dim=latent_dim,
+            embed_dim=args.embed_dim,
+            design=args.design,
+            potential_model = True,
+            num_species = args.num_species
+        )
+        '''
         self.transport = create_transport(
             args,
             args.path_type,
@@ -159,28 +172,12 @@ class LattEquivariantMDGenWrapper(Wrapper):
                 conditional_batch = torch.rand(1)[0] >= 0.9
             cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
         
-        if self.args.potential_model:
-            return {
-                "species": species,
-                "latents": latents,
-                'loss_mask': v_loss_mask,
-                "E": batch["e_mace"],
-                'model_kwargs': {
-                    "aatype": species,
-                    "cell": batch["cell"],
-                    "num_atoms": batch["num_atoms"],
-                    "conditions": None,
-                    "latt_feature": {
-                        "cell": prior_cell,
-                        'dt': 1./self.args.inference_steps
-                    }
-                }
-            }
-        elif (self.args.sim_condition and conditional_batch):
+        if (self.args.sim_condition and conditional_batch):
             return {
                 "species": batch['species_next'],
                 "latents": batch['x_next'],
                 'loss_mask': batch["TKS_v_mask"],
+                "E": batch["e_mace"],
                 'model_kwargs': {
                     "x1": batch['x_next'],
                     'v_mask': (batch["TKS_v_mask"]!=0).to(int),
@@ -202,6 +199,7 @@ class LattEquivariantMDGenWrapper(Wrapper):
                 "species": species,
                 "latents": latents,
                 'loss_mask': v_loss_mask,
+                "E": batch["e_mace"],
                 'model_kwargs': {
                     "x1": latents,
                     'v_mask': (v_loss_mask!=0).to(int),
@@ -223,39 +221,35 @@ class LattEquivariantMDGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
 
         start = time.time()
-        if self.args.potential_model:
-            B,T,L,_ = prep["latents"].shape
-            t = torch.ones((B,), device=prep["latents"].device)
-            energy = self.model(prep['latents'], t, **prep["model_kwargs"])
-            energy = energy.sum(dim=2).squeeze(-1)
-            # forces = -torch.autograd.grad(energy, prep['latents'])[0]
-            loss_energy = (energy - prep["E"])**2
-            loss = loss_energy
-            self.log('loss', loss)
-        else:
-            out_dict = self.transport.training_losses_lattpath(
-                model=self.model,
-                x1=prep['latents'],
-                aatype1=batch['species'],
-                mask=prep['loss_mask'],
-                model_kwargs=prep['model_kwargs']
-            )
-            self.log('model_dur', time.time() - start)
-            loss = out_dict['loss']
-            self.log('loss', loss)
-            self.log('loss_cell', out_dict['loss_cell'])
-            if self.score_model is not None:
-                self.log("loss_flow", out_dict['loss_flow'])
-                self.log("loss_score", out_dict['loss_score'])
 
-            self.log('time', out_dict['t'])
+        out_dict = self.transport.training_losses_lattpath(
+            model=self.model,
+            x1=prep['latents'],
+            aatype1=batch['species'],
+            mask=prep['loss_mask'],
+            model_kwargs=prep['model_kwargs']
+        )
+        self.log('model_dur', time.time() - start)
 
-            self.log('dur', time.time() - self.last_log_time)
-            if 'name' in batch:
-                self.log('name', ','.join(batch['name']))
-            self.log('general_step_dur', time.time() - start1)
-            self.last_log_time = time.time()
-        
+        # B,T,L,_ = prep["latents"].shape
+        # t = torch.ones((B,), device=prep["latents"].device)
+        # energy = self.potential_model(prep['latents'], t, **prep["model_kwargs"])
+        # energy = energy.sum(dim=2).squeeze(-1)
+        # loss_energy = (energy - prep["E"])**2
+        # self.log('loss_energy', loss_energy)
+
+        loss = out_dict['loss'] # +loss_energy
+        self.log('loss', loss)
+        self.log('loss_flow', out_dict['loss_flow'])
+        self.log('loss_cell', out_dict['loss_cell'])
+        if self.score_model is not None:
+            self.log("loss_score", out_dict['loss_score'])
+        self.log('time', out_dict['t'])
+        self.log('dur', time.time() - self.last_log_time)
+        if 'name' in batch:
+            self.log('name', ','.join(batch['name']))
+        self.log('general_step_dur', time.time() - start1)
+        self.last_log_time = time.time()
         return loss.mean()
 
 
@@ -283,7 +277,9 @@ class LattEquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)
+            # zs = torch.randn(B, T, N, D, device=self.device)
+            frac_zs = (torch.randn(B, T, N, D, device=self.device)/2) % 1 - 0.5
+            zs = frac_zs@prep['model_kwargs']['cell'] 
 
         if self.score_model is None:
             sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)  # default to ode

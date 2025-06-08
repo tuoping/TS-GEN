@@ -170,12 +170,57 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     return emb
 
 
-def _TransM_by_dx(A,B,rcond=None):
-    # M = torch.linalg.lstsq(A, B, rcond=None)[0].T
-    ## Normalize
-    M0 = torch.linalg.lstsq(A, B, rcond=rcond).solution
+
+def _TransM_by_dx(A: torch.Tensor,
+                        B: torch.Tensor,
+                        lam: float = 1e-6,
+                        eps: float = 1e-8) -> torch.Tensor:
+    """
+    Solve (AᵀA + λI) M = AᵀB in batch form, so M stays full‐rank.
+    Then normalize det(M)=1 in a NaN‐safe way.
+    
+    Args:
+      A    Tensor of shape (..., 3, 3)
+      B    Tensor of shape (..., 3, 3)
+      lam  small regularization constant (λ > 0)
+    
+    Returns:
+      F_fit  Tensor of shape (..., 3, 3), which is Mᵀ after det‐normalization
+    """
+    # 1) Build AᵀA + λI, and AᵀB in batch form.
+    #    If A is (..., 3, 3), then:
+    AT = A.transpose(-2, -1)                 # shape (..., 3, 3)
+    ATA = AT @ A                             # shape (..., 3, 3)
+    
+    # Add λI:
+    # We want to do ATA + λ * I for each batch. The easiest is to create an identity of size 3×3,
+    # then broadcast-add λ·I to every “slice” of ATA.
+    I3 = torch.eye(3, device=A.device).expand(ATA.shape)  # shape (..., 3, 3)
+    ATA_reg = ATA + lam * I3
+    
+    ATB = AT @ B                             # shape (..., 3, 3)
+    
+    # 2) Solve (ATA + λI) M = ATB for M in batched form:
+    #    Use torch.linalg.solve, which expects square (..., 3,3) @ (..., 3,3) = (..., 3,3).
+    M0 = torch.linalg.solve(ATA_reg, ATB) 
+    assert not torch.isnan(M0).any(), f"{ATA_reg} {ATB} {A} {B}"
     det_M0 = torch.det(M0)
-    M = M0 / det_M0.pow(1/3)  # M has det = 1
+    assert not torch.isnan(M0).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
+    # M = M0 / det_M0.pow(1/3)  # M has det = 1
+    # 4) Build a “safe” real cube‐root of det(M₀): sign = ±1 (never 0)
+    sign = torch.sign(det_M0)
+    sign = torch.where(sign == 0, torch.tensor(1.0, device=sign.device), sign)
+
+    #    - abs_det = |det(M₀)| clamped away from 0
+    abs_det = det_M0.abs().clamp(min=eps)  # shape (...,)
+
+    #    - real_cuberoot = sign * (abs_det)^(1/3)
+    real_cuberoot = sign * abs_det.pow(1.0 / 3.0)  # shape (...,)
+
+    # 5) Divide out that cube‐root so det(M) ≈ 1:
+    scale = real_cuberoot.unsqueeze(-1).unsqueeze(-1)  # (..., 1, 1)
+    M = M0 / scale   # now det(M) ≈ 1, and is real (no NaNs from negative det)
+    assert not torch.isnan(M).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
     F_fit = torch.transpose(M, 2,3)
 
     return F_fit
@@ -192,7 +237,9 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
 
         cond_dim = latent_dim
         self.cond_dim = cond_dim
-        self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
+        # self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
+        self.h_cond_to_emb = nn.Linear(1*embed_dim, embed_dim)
+        self.v_cond_to_emb = nn.Linear(3*embed_dim, embed_dim)
         self.mask_to_emb = nn.Embedding(cond_dim, embed_dim)
         self.abs_time_emb = abs_time_emb
         if abs_time_emb:
@@ -202,24 +249,28 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             self.time_embed.data.copy_(torch.from_numpy(time_embed).float().unsqueeze(0))
         
         self.num_species = num_species
+        self.embed_dim = embed_dim
 
     def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, out_cond=None,) -> Tuple[Tensor, Tensor]:
         h, v, edge_attr = self.encoder(species, edge_index, edge_attr, edge_vec, t)
         if self.abs_time_emb:
             h = h + self.time_embed[:, :, None]
         if out_cond is not None:
-            # edge_index_cond = out_cond["edge_index"]
-            # edge_len_cond = out_cond["distances"]
-            # edge_vec_cond = out_cond["distance_vec"]
-            # edge_attr_cond = torch.hstack([edge_vec_cond, edge_len_cond.view(-1, 1)])
-            # species_cond = out_cond["species"]
-            # h_cond, v_cond, edge_attr_cond = self.encoder(
-            #     species_cond.view(-1,self.num_species), 
-            #     edge_index_cond, edge_attr_cond, edge_vec_cond, 
-            #     torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
-            #     )
-            # h = h + self.cond_to_emb(h_cond)*(out_cond["mask"].reshape(-1,1)) # + self.mask_to_emb(out_cond["mask"])
-            h = h + self.cond_to_emb(out_cond["x"].reshape(-1,3)) + self.mask_to_emb(out_cond["mask"].reshape(-1))
+            edge_index_cond = out_cond["edge_index"]
+            edge_len_cond = out_cond["distances"]
+            edge_vec_cond = out_cond["distance_vec"]
+            edge_attr_cond = torch.hstack([edge_vec_cond, edge_len_cond.view(-1, 1)])
+            species_cond = out_cond["species"]
+            h_cond, v_cond, edge_attr_cond = self.encoder(
+                species_cond.view(-1,self.num_species), 
+                edge_index_cond, edge_attr_cond, edge_vec_cond, 
+                torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
+                )
+
+            h = h + self.h_cond_to_emb(h_cond) 
+            h = h + self.v_cond_to_emb(v_cond.reshape(-1,3*self.embed_dim)) 
+            h = h + self.mask_to_emb(out_cond["mask"].reshape(-1))
+            # h = h + self.cond_to_emb(out_cond["x"].reshape(-1,3)) + self.mask_to_emb(out_cond["mask"].reshape(-1))
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return self.decoder(h, v)
 
@@ -409,15 +460,15 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 max_num_neighbors_threshold=self.max_num_neighbors_threshold,
                 max_cell_images_per_dim=self.max_cell_images_per_dim,
             )
-            # if conditions is not None:
-            #     self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
-            #         cart_coords=conditions["x"].view(-1, 3),
-            #         lattice=conditions["cell"].view(-1, 3, 3),
-            #         num_atoms=conditions["num_atoms"].view(-1),
-            #         radius=self.cutoff,
-            #         max_num_neighbors_threshold=self.max_num_neighbors_threshold,
-            #         max_cell_images_per_dim=self.max_cell_images_per_dim,
-            #     )
+            if conditions is not None:
+                self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
+                    cart_coords=conditions["x"].view(-1, 3),
+                    lattice=conditions["cell"].view(-1, 3, 3),
+                    num_atoms=conditions["num_atoms"].view(-1),
+                    radius=self.cutoff,
+                    max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+                    max_cell_images_per_dim=self.max_cell_images_per_dim,
+                )
             # self.otf_graph = False
 
         out = get_pbc_distances(
@@ -431,20 +482,22 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             return_offsets=True,
             return_distance_vec=True,
         )
-        # if conditions is not None:
-        #     out_cond = get_pbc_distances(
-        #         conditions["x"].view(-1, 3),
-        #         self.edge_index_cond,
-        #         conditions["cell"].view(-1, 3, 3),
-        #         self.to_jimages_cond,
-        #         conditions["num_atoms"].view(-1),
-        #         self.num_bonds_cond,
-        #         coord_is_cart=True,
-        #         return_offsets=True,
-        #         return_distance_vec=True,
-        #     )
-        #     out_cond["species"] = conditions["species"]
-        #     out_cond["mask"] = conditions["mask"]
+        if conditions is not None:
+            out_cond = get_pbc_distances(
+                conditions["x"].view(-1, 3),
+                self.edge_index_cond,
+                conditions["cell"].view(-1, 3, 3),
+                self.to_jimages_cond,
+                conditions["num_atoms"].view(-1),
+                self.num_bonds_cond,
+                coord_is_cart=True,
+                return_offsets=True,
+                return_distance_vec=True,
+            )
+            out_cond["species"] = conditions["species"]
+            out_cond["mask"] = conditions["mask"]
+        else:
+            out_cond=None
         edge_index = out["edge_index"]
         edge_len = out["distances"]
         edge_vec = out["distance_vec"]
@@ -458,7 +511,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species, dtype=torch.float)
             
         
-        scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), conditions)
+        scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), out_cond)
         if self.design:
             # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
             return scaler_out.view(B, T, N, -1)
@@ -466,9 +519,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             return scaler_out.reshape(B, T, N, -1)
         else:
             if latt_feature is not None:
-                x_next = x + vector_out.reshape(B, T, N, -1)*latt_feature['dt']
-                TransM = _TransM_by_dx(x, x_next)
-                latt_feature["cell"] = TransM@latt_feature["cell"]
+                raise Exception("Lattice flow not implemented")
 
             return vector_out.reshape(B, T, N, -1)
         
@@ -483,21 +534,18 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             if not self.potential_model:
                 x_ = x_*v_mask+x1*(~v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
-            if not self.potential_model:
-                return scaler_out*v_mask
-            else:
-                return scaler_out
+            return scaler_out*v_mask
+        elif self.potential_model:
+            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return scaler_out
         else:
-            if not self.potential_model:
-                x = x*v_mask+x1*(~v_mask)
+            x = x*v_mask+x1*(~v_mask)
             if latt_feature is not None:
+                assert not torch.isnan(latt_feature['cell']).any()
                 vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
             else:
-                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype, latt_feature)
-            if not self.potential_model:
-                return vector_out*v_mask
-            else:
-                return vector_out
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return vector_out*v_mask
 
     def forward_inference(self, x: Tensor, t: Tensor, 
                 cell=None, 
@@ -510,22 +558,17 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             if not self.potential_model:
                 x_ = x_*v_mask+x1*(~v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
-            if not self.potential_model:
-                return scaler_out*v_mask
-            else:
-                return scaler_out
-
+            return scaler_out*v_mask
+        elif self.potential_model:
+            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return scaler_out
         else:
-            if not self.potential_model:
-                x = x*v_mask+x1*(~v_mask)
+            x = x*v_mask+x1*(~v_mask)
             if latt_feature is not None:
                 vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
             else:
-                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype, latt_feature)
-            if not self.potential_model:
-                return vector_out*v_mask
-            else:
-                return vector_out
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return vector_out*v_mask
     
 
 class TransformerDecoder(nn.Module):

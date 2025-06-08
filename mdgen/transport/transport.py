@@ -230,23 +230,7 @@ def interp_log_then_rescale(cell0, cell1, t, eps=1e-8):
     return cell_t.real
 
 
-def latt_plan(x0, x1, cell_0, cell_1, xt, t):
-    TransM_1 = _TransM_by_dx(x1, xt)
-    cell_t_1 = TransM_1@cell_1
-    vol_t_1 = (cell_t_1[:,:,0,:]*torch.cross(cell_t_1[:,:,1,:], cell_t_1[:,:,2,:])).sum(-1)
-    TransM_0 = _TransM_by_dx(x0, xt)
-    cell_t_0 = TransM_0@cell_0
-    vol_t_0 = (cell_t_0[:,:,0,:]*torch.cross(cell_t_0[:,:,1,:], cell_t_0[:,:,2,:])).sum(-1)
-    assert torch.allclose(vol_t_0, vol_t_1, rtol=5e-2), f"{vol_t_0} != {vol_t_1} \n from cell_t_0, cell_t_1 = {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1} \n Check:: x0.max(), x0.min()={x0.max(), x0.min()} x1.max(), x1.min()={x1.max(), x1.min()}  xt.max(), xt.min()={xt.max(), xt.min()} "
-    # cell_t = expm((1-t[:,None,None,None])*logm(cell_t_0) + t[:,None,None,None]*logm(cell_t_1)).real
-    B,T,N,_ = x0.shape
-    cell_t = interp_log_then_rescale(cell_t_0.reshape(B*T,3,3), cell_t_1.reshape(B*T,3,3), t.unsqueeze(1).expand(-1,T).reshape(-1)).reshape(B,T,3,3)
-    vol_t = (cell_t[:,:,0,:]*torch.cross(cell_t[:,:,1,:], cell_t[:,:,2,:])).sum(-1)
-    assert torch.allclose(vol_t, vol_t_1, rtol=5e-2), f"{vol_t} != {vol_t_1} \n from cell_t, cell_t_0, cell_t_1 = {cell_t}, {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1}"
-    return cell_t
-
-
-from torch_linear_assignment import batch_linear_assignment
+# from torch_linear_assignment import batch_linear_assignment
 
 class Transport:
 
@@ -438,15 +422,14 @@ class Transport:
         return terms
 
     def sample_latt(self, x1, cell):
-        """Sampling x0 & t based on shape of x1 (if needed)
+        """Sampling x0 & t based on shape of x1, and the particle density.
+        And reorder x0 by Hungarian algorithm over the distance matrix between x0 and x1
           Args:
             x1 - data point; [batch, *dim]
         """
-        # x0 = th.fmod(th.randn_like(x1)@(cell/2.0), cell/2.0)
         frac_x0 = (th.randn_like(x1)/2) % 1 - 0.5
         _x0 = frac_x0@cell 
-        # _, indices = torch.sort(torch.abs(_x0), dim=1)
-        # x0 = torch.gather(_x0, dim=1, index=indices)
+        # Reorder x0 by Hungarian algorithm
         B,T,N,_ = x1.shape
         x0 = th.zeros_like(_x0)
         # for i in range(B):
@@ -463,123 +446,6 @@ class Transport:
         cell_0 = (torch.eye(3,3).unsqueeze(0).expand(T,-1,-1).unsqueeze(0).expand(B,-1,-1,-1).to(x1.device))*length_prior_cell[:,:,None,None]
 
         return t, x0, x1, cell_0
-
-    def training_losses_lattpath(
-            self,
-            model,
-            x1,           # target tokens
-            aatype1=None, # target aatype
-            mask=None,
-            num_species=5,
-            model_kwargs=None,
-    ):
-        """Loss for training the score model
-        Args:
-        - model: backbone model; could be score, noise, or velocity
-        - x1: datapoint
-        - model_kwargs: additional arguments for the model
-        """
-
-        if model_kwargs == None:
-            model_kwargs = {}
-        
-        ### normal sampler of t
-        t, x0, x1, cell_0 = self.sample_latt(x1, model_kwargs['cell'])
-        if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
-            assert self.model_type == ModelType.VELOCITY
-            seq_one_hot = aatype1
-            ### exponential sampler of t
-            # exponential_dist = torch.distributions.Exponential(1.0)
-            # t = exponential_dist.sample((seq_one_hot.shape[0],)).to(seq_one_hot.device).float()
-            alphas, _ = t_to_alpha(t, self.args)
-            alphas = torch.ones_like(seq_one_hot) + seq_one_hot * (alphas[:, None, None, None] - torch.ones_like(seq_one_hot))
-            x_d = th.distributions.Dirichlet(alphas).sample()
-            xt = x_d
-
-            # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
-        else:
-            if self.score_model is None:
-                t, xt, ut = self.path_sampler.plan(t, x0, x1)
-                dt = torch.rand(t.shape).to(t.device) * 0.04
-                _, xt_next, _ = self.path_sampler.plan(t+dt, x0, x1)
-                cell_t = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt, t)
-                cell_t_next = latt_plan(x0, x1, cell_0, model_kwargs['cell'], xt_next, t+dt)
-                model_kwargs['latt_feature']['dt'] = dt
-                model_kwargs['latt_feature']['cell'] = cell_t
-            else:
-                t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
-
-            '''
-            ## add latent noise using antithetic sampling
-            # gamma_t = (0.9*t*(1-t)).sqrt()[:,None,None,None]
-            # dt_gamma_t = (0.9/2*(1-2*t)/((t*(1-t)).sqrt()))[:,None,None,None]
-            # xt += gamma_t*x0
-            # xt_ = xt.clone()
-            # xt_ -= gamma_t*x0
-            # ut += dt_gamma_t*x0
-            # ut_ = ut.clone()
-            # ut_ -= dt_gamma_t*x0
-            '''
-        
-        B = x1.shape[0]
-        assert t.shape == (B,)
-        model_output = model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
-        if self.score_model is not None:
-            score_model_output = self.score_model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
-            
-        B, *_, C = xt.shape
-        assert model_output.size() == (B, *xt.size()[1:-1], C)
-
-        if self.args.design:
-            logits = model_output[:, :, :, -num_species:]
-            model_output = model_output[:, :, :, :-num_species]
-
-        terms = {}
-        terms['t'] = t
-        terms['pred'] = model_output
-        if not (self.args.design):
-            if self.model_type == ModelType.VELOCITY:
-                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)
-
-                # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
-                # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
-                # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
-
-                terms['loss_flow'] = mean_flat((0.5*(model_output)**2 - (ut)*model_output), mask)
-                terms['loss_cell'] = mean_flat((model_kwargs['latt_feature']['cell']-cell_t_next)**2, torch.ones_like(cell_t_next).to(cell_t_next.device) )
-                if self.score_model is not None:
-                    terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
-                    terms['loss'] = terms['loss_flow']+terms['loss_score']
-                else:
-                    terms['loss'] = terms['loss_flow']
-            else:
-                _, drift_var = self.path_sampler.compute_drift(xt, t)
-                sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
-                if self.loss_type in [WeightType.VELOCITY]:
-                    weight = (drift_var / sigma_t) ** 2
-                elif self.loss_type in [WeightType.LIKELIHOOD]:
-                    weight = drift_var / (sigma_t ** 2)
-                elif self.loss_type in [WeightType.NONE]:
-                    weight = 1
-                else:
-                    raise NotImplementedError()
-
-                if self.model_type == ModelType.NOISE:
-                    terms['loss'] = mean_flat(weight * ((model_output - x0) ** 2), mask)
-                else:
-                    terms["loss_continuous"]=(weight * ((model_output * sigma_t + x0) ** 2)*mask)
-                    terms['loss'] = mean_flat(weight * ((model_output * sigma_t + x0) ** 2), mask) # loss by comparing the x_0
-
-        # more changes for dirichlet flow matching
-
-        if self.args.design:
-            terms['loss_continuous'] = torch.tensor(torch.nan, device=xt.device)
-            loss_d = th.nn.functional.cross_entropy(logits.reshape(-1,num_species), aatype1.reshape(-1,num_species).argmax(dim=-1), reduction="none").reshape(x1.shape[:-1])
-            terms['loss'] = mean_flat(loss_d, mask)
-            terms['loss_discrete'] = loss_d
-            terms['logits'] = logits
-
-        return terms
 
     def get_drift(
             self

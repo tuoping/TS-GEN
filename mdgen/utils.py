@@ -100,6 +100,7 @@ def prots_to_pdb(prots):
     return ss
 
 
+# Obtain the stiffness matrix based on the bulk and shear moduli
 def _low_symm_couplings(material_type, min_coupling):
     if material_type == "Metals":
         weak_coupling = min([80, min_coupling])
@@ -285,3 +286,138 @@ def Stiffness_from_modulus(SGn, bulk_dict, shear_dict, material_type="Metals"):
             stiffness_matrix[j,i] = stiffness_matrix[i,j]
 
     return stiffness_matrix
+
+# Obtain transition matrix of the lattice matrix based on coordinates change
+def interp_then_rescale(A, B, x):
+    Mx = (1 - x) * A + x * B
+    det_Mx = torch.det(Mx)
+    V = torch.det(A)
+    scale = (V / det_Mx).abs().pow(1/3)
+    return Mx * scale
+
+
+def polar_decompose_batch(F):
+    """
+    Batched polar decomposition: F = R @ U,
+    where R∈SO(3) (proper rotation, det=+1) and U is SPD.
+    Input:  F of shape (N, 3, 3), assumed invertible.
+    Returns:
+      R (N,3,3), U (N,3,3)
+    """
+    U_svd, S, Vh = torch.linalg.svd(F)  # U_svd:(N,3,3), S:(N,3), Vh:(N,3,3)
+    R = U_svd @ Vh
+    # Ensure proper rotation (det=+1)
+    detR = torch.det(R)                 # (N,)
+    mask_reflect = detR < 0             # where reflection occurred
+    if mask_reflect.any():
+        # Flip last column of Vh where det(R)<0
+        Vh[mask_reflect, -1, :] *= -1
+        R = U_svd @ Vh
+
+    # Build U = Vhᵀ @ diag(S) @ Vh  → SPD
+    S_mat = torch.zeros_like(F)
+    S_mat[:, 0, 0] = S[:, 0]
+    S_mat[:, 1, 1] = S[:, 1]
+    S_mat[:, 2, 2] = S[:, 2]
+    U_mat = Vh.transpose(-2, -1) @ S_mat @ Vh
+    return R, U_mat
+
+def matrix_log_symmetric_batch(U):
+    """
+    Batched log for SPD matrices U (N,3,3) via eigh.
+    Returns logU, real-symmetric.
+    """
+    eigvals, eigvecs = torch.linalg.eigh(U)    # eigvals:(N,3), eigvecs:(N,3,3)
+    # clamp eigenvalues away from zero
+    log_eig = torch.log(eigvals.clamp(min=1e-8))  # (N,3)
+    logU = eigvecs @ torch.diag_embed(log_eig) @ eigvecs.transpose(-2, -1)
+    return logU
+
+def matrix_exp_symmetric_batch(logU):
+    """
+    Batched exp for real‐symmetric matrices logU (N,3,3) via eigh.
+    Returns U = exp(logU), SPD.
+    """
+    eigvals, eigvecs = torch.linalg.eigh(logU)
+    exp_eig = torch.exp(eigvals)  # (N,3)
+    U = eigvecs @ torch.diag_embed(exp_eig) @ eigvecs.transpose(-2, -1)
+    return U
+
+def matrix_logm_SO3_batch(R):
+    """
+    Batched matrix log for R∈SO(3), returns skew‐symmetric (N,3,3).
+    Uses: log(R) = (θ / (2 sin θ)) (R - Rᵀ),   θ = arccos((tr(R)-1)/2).
+    """
+    traces = R.diagonal(dim1=-2, dim2=-1).sum(-1)     # (N,)
+    cos_t = ((traces - 1) / 2).clamp(-1.0, 1.0)
+    theta = torch.acos(cos_t)                         # (N,)
+    sin_t = torch.sin(theta)
+    skew = 0.5 * (R - R.transpose(-2, -1))             # (N,3,3)
+
+    factor = torch.zeros_like(theta)                   # (N,)
+    mask = theta > 1e-5
+    factor[mask] = theta[mask] / (2 * sin_t[mask])
+    factor = factor.view(-1, 1, 1)                     # (N,1,1)
+
+    logR = factor * skew                               # (N,3,3), skew‐symmetric
+    return logR
+
+def matrix_exp_SO3_batch(skew):
+    """
+    Batched Rodrigues’ formula for exp(skew) where skew∈so(3) (N,3,3).
+    Returns R∈SO(3), det=+1.
+    """
+    a = skew[:, 2, 1]
+    b = skew[:, 0, 2]
+    c = skew[:, 1, 0]
+    theta = torch.sqrt(a*a + b*b + c*c).clamp(min=1e-8)  # (N,)
+    K = skew / theta.view(-1, 1, 1)                      # (N,3,3)
+    I = torch.eye(3, device=skew.device).unsqueeze(0).expand_as(skew)
+    sin_t = torch.sin(theta).view(-1, 1, 1)
+    cos_t = torch.cos(theta).view(-1, 1, 1)
+    R = I + sin_t * K + (1 - cos_t) * (K @ K)
+    return R
+
+def interpolate_polar_batch(cell0, cell1, t):
+    """
+    Fully batched interpolation between cell0, cell1 (N,3,3), preserving det>0.
+    t can be shape (N,) or (N,1,1).  Returns (N,3,3) with det>0.
+    """
+    # Decompose both endpoints
+    R0, U0 = polar_decompose_batch(cell0)   # (N,3,3), (N,3,3)
+    R1, U1 = polar_decompose_batch(cell1)   # (N,3,3), (N,3,3)
+
+    # Rotation interpolation on SO(3)
+    R_rel = R0.transpose(-2, -1) @ R1       # (N,3,3)
+    logR_rel = matrix_logm_SO3_batch(R_rel) # (N,3,3)
+    if t.ndim == 1:
+        t = t.view(-1, 1, 1)
+    R_interp = R0 @ matrix_exp_SO3_batch(t * logR_rel)  # (N,3,3)
+
+    # Stretch interpolation in log‐space
+    logU0 = matrix_log_symmetric_batch(U0)  # (N,3,3)
+    logU1 = matrix_log_symmetric_batch(U1)  # (N,3,3)
+    logU_interp = (1 - t) * logU0 + t * logU1  # (N,3,3)
+    U_interp = matrix_exp_symmetric_batch(logU_interp) # (N,3,3)
+
+    # Recombine: h(t) = R(t) U(t)
+    cell_t = R_interp @ U_interp  # (N,3,3), each det>0
+    return cell_t
+
+def latt_plan(x0, x1, cell_0, cell_1, xt, t):
+    TransM_1 = _TransM_by_dx(x1, xt)
+    cell_t_1 = TransM_1@cell_1
+    vol_t_1 = (cell_t_1[:,:,0,:]*torch.cross(cell_t_1[:,:,1,:], cell_t_1[:,:,2,:])).sum(-1)
+    TransM_0 = _TransM_by_dx(x0, xt)
+    cell_t_0 = TransM_0@cell_0
+    vol_t_0 = (cell_t_0[:,:,0,:]*torch.cross(cell_t_0[:,:,1,:], cell_t_0[:,:,2,:])).sum(-1)
+    assert not torch.isnan(vol_t_0)
+    assert not torch.isnan(vol_t_1)
+    assert torch.allclose(vol_t_0, vol_t_1, rtol=5e-2), f"{vol_t_0} != {vol_t_1} \n from cell_t_0, cell_t_1 = {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1} \n Check:: x0.max(), x0.min()={x0.max(), x0.min()} x1.max(), x1.min()={x1.max(), x1.min()}  xt.max(), xt.min()={xt.max(), xt.min()} "
+    # cell_t = expm((1-t[:,None,None,None])*logm(cell_t_0) + t[:,None,None,None]*logm(cell_t_1)).real
+    B,T,N,_ = x0.shape
+    cell_t = interpolate_polar_batch(cell_t_0.reshape(B*T,3,3), cell_t_1.reshape(B*T,3,3), t.unsqueeze(1).expand(-1,T).reshape(-1)).reshape(B,T,3,3)
+    vol_t = (cell_t[:,:,0,:]*torch.cross(cell_t[:,:,1,:], cell_t[:,:,2,:])).sum(-1)
+    assert not torch.isnan(vol_t)
+    assert torch.allclose(vol_t, vol_t_1, rtol=5e-2), f"{vol_t} != {vol_t_1} \n from cell_t, cell_t_0, cell_t_1 = {cell_t}, {cell_t_0}, {cell_t_1} \n from cell_0, cell_1 = {cell_0}, {cell_1}"
+    return cell_t

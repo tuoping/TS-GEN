@@ -144,11 +144,6 @@ class EquivariantMDGenWrapper(Wrapper):
         
         if self.args.sim_condition:
             cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
-            # x_cond = x_now[:,0]
-            # species_cond = species[:,0].unsqueeze(1)
-            # cell_cond = batch["cell"][:,0]
-            # num_atoms_cond = batch["num_atoms"][:,0]
-            # cond_mask = (mask != 0)[:,0]
             cond_mask[:, 0] = 1
             if self.stage == "inference":
                 conditional_batch = True
@@ -183,6 +178,9 @@ class EquivariantMDGenWrapper(Wrapper):
                     "conditions": {
                         'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
                         "mask": cond_mask,
+                        'cell': batch['cell'],
+                        'species': batch['species'],
+                        'num_atoms': batch['num_atoms']
                     }
                 }
             }

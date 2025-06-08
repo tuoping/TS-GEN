@@ -274,7 +274,7 @@ def calculate_rdf_pair(
 
     return r_values, g_r, integral_g_r
 
-# from mace.calculators import MACECalculator
+from mace.calculators import MACECalculator
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __init__(self, traj_dirname, cutoff, num_species=5, num_frames=None, random_starting_point=True, localmask=False, sim_condition=True, stage="train"):
@@ -325,7 +325,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.traj_filenames)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, idx, start_i_traj = None):
         idx = idx % len(self.traj_filenames)
         if self.stage == "save":
             atoms_list = ase.io.read(self.traj_filenames[idx], index=":")
@@ -406,10 +406,11 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             act_space = torch.from_numpy(np.loadtxt(self.traj_act_space[idx])).to(torch.long)
             LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
             TKS_reward_pool = torch.stack([data.E_barrier-data.freq*self.kT for data in _dataset])
-            if self.random_starting_point:
-                start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames-1, 1)[0]
-            else:
-                start_i_traj = 0
+            if start_i_traj is None:
+                if self.random_starting_point:
+                    start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames-1, 1)[0]
+                else:
+                    start_i_traj = 0
             if self.num_frames is None:
                 self.num_frames = len(_dataset)
             end_i_traj = start_i_traj+self.num_frames
@@ -470,8 +471,8 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             else:
                 e_mace = torch.zeros_like(mask)
             if self.sim_condition:
-                # disp_next = [get_distances(dataset[i].pos, dataset_next[i].pos, dataset[i].cell, pbc=True)[0].diagonal().T for i in range(len(dataset))]
-                disp_next = [torch.from_numpy(np.array([get_distances(dataset[i].pos[j], dataset_next[i].pos[j], dataset[i].cell, pbc=True)[0][0][0] for j in range(len(dataset[i].pos))])).to(torch.float32) for i in range(len(dataset))]
+                # disp_next = [torch.from_numpy(np.array([get_distances(dataset[i].pos[j], dataset_next[i].pos[j], dataset[i].cell, pbc=True)[0][0][0] for j in range(len(dataset[i].pos))])).to(torch.float32) for i in range(len(dataset))]
+                disp_next = [dataset[i].disp for i in range(len(dataset))]
                 x_next = [dataset[i].pos + disp_next[i] for i in range(len(dataset))]
                 return {
                     "idx": idx_source,
@@ -505,7 +506,93 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "e_now": torch.stack([data.E_now for data in dataset]),
                     "e_mace": e_mace
                 }
-        
+    
+    def mask_from_actions(self, idx, act_space, start_i_traj=None):
+        idx = idx % len(self.traj_filenames)
+        idx_source = self.idx_sources[idx]
+        _dataset = torch.load(self.traj_filenames[idx], weights_only=False)
+        # _RDF = torch.load(self.traj_rdf[idx], weights_only=False)
+        # assert _RDF[0].shape == (2,35)
+        LSS_reward_pool = torch.stack([data.E_now for data in _dataset])
+        TKS_reward_pool = torch.stack([data.E_barrier-data.freq*self.kT for data in _dataset])
+        if start_i_traj is None:
+            if self.random_starting_point:
+                start_i_traj = np.random.randint(0, len(_dataset)-self.num_frames-1, 1)[0]
+            else:
+                start_i_traj = 0
+        if self.num_frames is None:
+            self.num_frames = len(_dataset)
+        end_i_traj = start_i_traj+self.num_frames
+        dataset = _dataset[start_i_traj:end_i_traj]
+        LSS_reward = torch.stack([data.E_now for data in dataset]) # T
+        if self.sim_condition:
+            TKS_reward = torch.stack([-data.E_barrier+data.freq*self.kT for data in dataset])  # T
+            
+
+        x = torch.stack([data.pos for data in dataset])
+        T,L,_ = x.shape
+        assert T == 1
+        # log_mask = -LSS_reward - self.partition
+        ### Normalize over each trajectory
+        log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+        if self.sim_condition:
+            TKS_log_mask = -TKS_reward - torch.logsumexp(-TKS_reward_pool, dim=0) 
+            
+        _mask = torch.ones(T,L) # T,L
+        _v_mask = _mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+        _h_mask = _mask.unsqueeze(-1).expand(-1,-1,self.num_species) # T,L,num_species
+        if self.sim_condition:
+            _TKS_mask = torch.ones(T,L)
+            _TKS_v_mask = _TKS_mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+            _TKS_h_mask = _TKS_mask.unsqueeze(-1).expand(-1,-1,self.num_species) # T,L,num_species
+
+        if self.localmask:
+            # disp_mask = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
+            mask = torch.ones([T,L])
+            v_mask = torch.ones([T,L,3])
+            h_mask = torch.ones([T,L,self.num_species])
+            if self.sim_condition:
+                TKS_mask = torch.ones([T,L])
+                TKS_v_mask = torch.ones([T,L,3])
+                TKS_h_mask = torch.ones([T,L,self.num_species])
+            for i_traj in range(start_i_traj, end_i_traj):
+                disp_mask = torch.zeros([L])
+                act_space_i = act_space[i_traj]
+                disp_mask[act_space_i] = 1
+                mask[i_traj-start_i_traj] = _mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0)
+                h_mask[i_traj-start_i_traj] = _h_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                v_mask[i_traj-start_i_traj] = _v_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                if self.sim_condition:
+                    TKS_mask[i_traj-start_i_traj] = _TKS_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0)
+                    TKS_h_mask[i_traj-start_i_traj] = _TKS_h_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+                    TKS_v_mask[i_traj-start_i_traj] = _TKS_v_mask[i_traj-start_i_traj]*disp_mask.unsqueeze(0).unsqueeze(-1)
+        else:
+            mask = _mask
+            v_mask = _v_mask
+            h_mask = _h_mask
+            if self.sim_condition:
+                TKS_mask = _TKS_mask
+                TKS_v_mask = _TKS_v_mask
+                TKS_h_mask = _TKS_h_mask
+        if self.sim_condition:
+            return {
+                "idx": idx_source,
+                "name": "CrCoNi",
+                "mask": mask,
+                "v_mask": v_mask,
+                "h_mask": h_mask,
+                "TKS_mask": TKS_mask,
+                "TKS_v_mask": TKS_v_mask,
+                "TKS_h_mask": TKS_h_mask,
+            }
+        else:
+            return {
+                "idx": idx_source,
+                "name": "CrCoNi",
+                "mask": mask,
+                "v_mask": v_mask,
+                "h_mask": h_mask,
+            }
 
 
 class LatentDataset(torch.utils.data.Dataset):
@@ -594,18 +681,17 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
     def __init__(self, traj_dir, cutoff, num_species=5, localmask=False, sim_condition=False, stage="train", save_dir = None, save_filename = None, material_type="Ceramics"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
-        # self.calculator = MACECalculator(
-        #     model_path="./MACE-matpes-r2scan-omat-ft.model",
-        #     device="cuda",
-        #     default_dtype="float32",
-        # )
+        self.calculator = MACECalculator(
+            model_path="./MACE-matpes-r2scan-omat-ft.model",
+            device="cuda",
+            default_dtype="float32",
+        )
         self.num_species = num_species
         self.cutoff = cutoff
 
         self.num_frames = 1
         self.stage = stage
         self.localmask = localmask
-        self.random_starting_point = False
         self.sim_condition = sim_condition
 
         if self.stage == "save":
@@ -639,6 +725,8 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                     pbc=True
                 )
                 ase.io.write(f'{save_dir}/conventional.extxyz', atoms, append=True)
+                atoms.calc = self.calculator
+                mace_energy = atoms.get_potential_energy()
                 num_atoms = len(atoms)
                 atoms.wrap()   
                 # masses = atoms.get_masses()
@@ -657,6 +745,7 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
                     cell       = torch.tensor(np.array(atoms.cell), dtype=torch.float32),
                     E_formation = None,
                     E_above_hull = None,
+                    E = torch.tensor(mace_energy, dtype=torch.float32),
                     num_atoms = torch.tensor(num_atoms, dtype=torch.long),
                     # stiffness = torch.tensor(stiffness, dtype=torch.float32),
                     # masses = torch.tensor(masses)
@@ -699,6 +788,7 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
             "x": torch.stack([data.pos for data in dataset]),
             "cell": torch.stack([data.cell for data in dataset]),
             "num_atoms": torch.stack([data.num_atoms for data in dataset]),
+            'e_mace': torch.stack([data.E for data in dataset]),
             "mask": mask,
             "v_mask": v_mask,
             "h_mask": h_mask,
