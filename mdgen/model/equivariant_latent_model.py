@@ -170,61 +170,6 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     return emb
 
 
-
-def _TransM_by_dx(A: torch.Tensor,
-                        B: torch.Tensor,
-                        lam: float = 1e-6,
-                        eps: float = 1e-8) -> torch.Tensor:
-    """
-    Solve (AᵀA + λI) M = AᵀB in batch form, so M stays full‐rank.
-    Then normalize det(M)=1 in a NaN‐safe way.
-    
-    Args:
-      A    Tensor of shape (..., 3, 3)
-      B    Tensor of shape (..., 3, 3)
-      lam  small regularization constant (λ > 0)
-    
-    Returns:
-      F_fit  Tensor of shape (..., 3, 3), which is Mᵀ after det‐normalization
-    """
-    # 1) Build AᵀA + λI, and AᵀB in batch form.
-    #    If A is (..., 3, 3), then:
-    AT = A.transpose(-2, -1)                 # shape (..., 3, 3)
-    ATA = AT @ A                             # shape (..., 3, 3)
-    
-    # Add λI:
-    # We want to do ATA + λ * I for each batch. The easiest is to create an identity of size 3×3,
-    # then broadcast-add λ·I to every “slice” of ATA.
-    I3 = torch.eye(3, device=A.device).expand(ATA.shape)  # shape (..., 3, 3)
-    ATA_reg = ATA + lam * I3
-    
-    ATB = AT @ B                             # shape (..., 3, 3)
-    
-    # 2) Solve (ATA + λI) M = ATB for M in batched form:
-    #    Use torch.linalg.solve, which expects square (..., 3,3) @ (..., 3,3) = (..., 3,3).
-    M0 = torch.linalg.solve(ATA_reg, ATB) 
-    assert not torch.isnan(M0).any(), f"{ATA_reg} {ATB} {A} {B}"
-    det_M0 = torch.det(M0)
-    assert not torch.isnan(M0).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
-    # M = M0 / det_M0.pow(1/3)  # M has det = 1
-    # 4) Build a “safe” real cube‐root of det(M₀): sign = ±1 (never 0)
-    sign = torch.sign(det_M0)
-    sign = torch.where(sign == 0, torch.tensor(1.0, device=sign.device), sign)
-
-    #    - abs_det = |det(M₀)| clamped away from 0
-    abs_det = det_M0.abs().clamp(min=eps)  # shape (...,)
-
-    #    - real_cuberoot = sign * (abs_det)^(1/3)
-    real_cuberoot = sign * abs_det.pow(1.0 / 3.0)  # shape (...,)
-
-    # 5) Divide out that cube‐root so det(M) ≈ 1:
-    scale = real_cuberoot.unsqueeze(-1).unsqueeze(-1)  # (..., 1, 1)
-    M = M0 / scale   # now det(M) ≈ 1, and is real (no NaNs from negative det)
-    assert not torch.isnan(M).any(), f"{M0} {ATA_reg} {ATB} {A} {B}"
-    F_fit = torch.transpose(M, 2,3)
-
-    return F_fit
-
 class EquivariantTransformer_dpm(EquivariantTransformer):
     def __init__(self, encoder, processor, decoder, cutoff, latent_dim, embed_dim, otf_graph = True, design=False, potential_model=False, abs_time_emb=False, num_frames=None, num_species=5):
         super().__init__(encoder, processor, decoder)
@@ -447,7 +392,6 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 num_atoms=None,
                 conditions=None, 
                 aatype=None, latt_feature=None):
-        assert cell is not None
         B, T, N, _ = x.shape
         assert t.shape == (B,)
 
