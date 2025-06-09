@@ -793,3 +793,67 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
             "v_mask": v_mask,
             "h_mask": h_mask,
         }
+    
+
+class EquivariantTransformerDataset_Transition1x(torch.utils.data.Dataset):
+    def __init__(self, data_dirname, num_species=4, sim_condition=True, stage="train"):
+        temperature = 300
+        self.kT = temperature*8.617*10**-5
+        self.dataset = torch.load(os.path.join(data_dirname, f"{stage}.pt"))
+
+        self.num_species = num_species
+        self.stage = stage
+        self.sim_condition = sim_condition
+        # LSS_reward_pool = [data.E_reactant for data in self.dataset]+[data.E_product for data in self.dataset]+[data.E_transition_state for data in self.dataset]
+        # self.LSS_reward_pool = torch.tensor(LSS_reward_pool)
+        # self.partition = torch.logsumexp(-self.LSS_reward_pool, dim=0)
+    
+    def __len__(self):
+        return len(self.dataset)
+    
+    def __getitem__(self, idx):
+        idx = idx % len(self.dataset)
+        data = self.dataset[idx]
+
+        # LSS_reward = [data.E_reactant, data.E_product, data.E_transition_state]
+        # if self.sim_condition:
+        #     E_barrier = data.E_transition_state - data.E_reactant
+        #     TKS_reward = -E_barrier  # T
+        assert len(data.z_reactant)==len(data.z_product)
+        L = len(data.z_reactant)
+        mask = torch.ones([3,L]) # T,L
+        v_mask = mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
+        h_mask = mask.unsqueeze(-1).expand(-1,-1,self.num_species) # T,L,num_species
+        huge_cell = torch.eye(3,3)*200
+
+        if self.sim_condition:
+            raise Exception("For transition state generation")
+            return {
+                "name": data.rxn,
+                "species": torch.stack([data.z_reactant, data.z_product, data.z_reactant]),
+                "species_next": torch.stack([data.z for data in dataset_next]),
+                "x": torch.stack([data.pos for data in dataset]),
+                'x_next': torch.stack(x_next).to(torch.float32),
+                "cell": torch.stack([data.cell for data in dataset]),
+                "num_atoms": torch.stack([data.num_atoms for data in dataset]),
+                "mask": mask,
+                "v_mask": v_mask,
+                "h_mask": h_mask,
+                "TKS_mask": TKS_mask,
+                "TKS_v_mask": TKS_v_mask,
+                "TKS_h_mask": TKS_h_mask,
+                "e_now": torch.stack([data.E_now for data in dataset]),
+                "e_mace": e_mace
+            }
+        else:
+            return {
+                "name": data.rxn,
+                "species": torch.stack([data.z_reactant, data.z_product, data.z_transition_state]),
+                "x": torch.stack([data.pos_reactant, data.pos_product, data.pos_transition_state]),
+                "num_atoms": torch.tensor([len(data.z_reactant), len(data.z_product), len(data.z_transition_state)], dtype=torch.long),
+                'cell': torch.stack([huge_cell, huge_cell, huge_cell]),
+                "mask": mask,
+                "v_mask": v_mask,
+                "h_mask": h_mask,
+            }
+    

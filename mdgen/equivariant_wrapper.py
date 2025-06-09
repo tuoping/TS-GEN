@@ -150,7 +150,6 @@ class EquivariantMDGenWrapper(Wrapper):
             else:
                 conditional_batch = torch.rand(1)[0] >= 0.7
             cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
-        
         if self.args.potential_model:
             return {
                 "species": species,
@@ -159,7 +158,9 @@ class EquivariantMDGenWrapper(Wrapper):
                 "E": batch["e_mace"],
                 'model_kwargs': {
                     "aatype": species,
-                    "cell": batch["cell"],
+                    'x1': latents,
+                    'v_mask': (v_loss_mask!=0).to(int),
+                    "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
                 }
@@ -173,7 +174,7 @@ class EquivariantMDGenWrapper(Wrapper):
                     "x1": batch['x_next'],
                     'v_mask': (batch["TKS_v_mask"]!=0).to(int),
                     "aatype": batch['species_next'],
-                    "cell": batch["cell"],
+                    "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
                         'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
@@ -190,10 +191,10 @@ class EquivariantMDGenWrapper(Wrapper):
                 "latents": latents,
                 'loss_mask': v_loss_mask,
                 'model_kwargs': {
-                    "x1": latents,
-                    'v_mask': (v_loss_mask!=0).to(int),
                     "aatype": species,
-                    "cell": batch["cell"],
+                    'x1': latents,
+                    'v_mask': (v_loss_mask!=0).to(int),
+                    "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
                 }
