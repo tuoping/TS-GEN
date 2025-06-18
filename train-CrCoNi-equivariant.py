@@ -1,5 +1,6 @@
 from mdgen.parsing import parse_train_args
 args = parse_train_args()
+args.pbc = True
 from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
@@ -45,10 +46,12 @@ val_loader = torch.utils.data.DataLoader(
     batch_size=args.batch_size,
     num_workers=args.num_workers,
 )
-model = EquivariantMDGenWrapper(args)
-# checkpoint = torch.load(args.ckpt, weights_only=False)
-# model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
-# model.load_state_dict(checkpoint["state_dict"])
+
+
+# model = EquivariantMDGenWrapper(args)
+checkpoint = torch.load(args.ckpt, weights_only=False)
+model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
+model.load_state_dict(checkpoint["state_dict"], strict=False)
 
 trainer = pl.Trainer(
     accelerator="gpu" if torch.cuda.is_available() else 'auto',
@@ -81,6 +84,8 @@ trainer = pl.Trainer(
 
 
 if args.validate:
-    trainer.validate(model, val_loader, ckpt_path=args.ckpt)
+    # trainer.validate(model, val_loader, ckpt_path=args.ckpt)
+    trainer.validate(model, val_loader)
 else:
-    trainer.fit(model, train_loader, val_loader, ckpt_path=args.ckpt)
+    # trainer.fit(model, train_loader, val_loader, ckpt_path=args.ckpt)
+    trainer.fit(model, train_loader, val_loader)

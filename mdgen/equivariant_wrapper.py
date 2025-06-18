@@ -31,10 +31,6 @@ class EquivariantMDGenWrapper(Wrapper):
             num_scalar_out = self.args.num_species
             num_vector_out=0
             latent_dim = self.args.num_species
-        elif args.potential_model:
-            num_scalar_out = 1
-            latent_dim = 3
-            num_vector_out = 0
         else:
             num_scalar_out = 0
             num_vector_out=1
@@ -42,6 +38,7 @@ class EquivariantMDGenWrapper(Wrapper):
         
         encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1)
         processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim)
+        print("Initializing drift model")
         self.model = EquivariantTransformer_dpm(
             encoder = encoder,
             processor = processor,
@@ -50,9 +47,28 @@ class EquivariantMDGenWrapper(Wrapper):
             latent_dim=latent_dim,
             embed_dim=args.embed_dim,
             design=args.design,
-            potential_model = args.potential_model
+            potential_model = False,
+            tps_condition=args.tps_condition,
+            pbc=args.pbc,
         )
+        if args.potential_model:
+            num_scalar_out = 1
+            latent_dim = 3
+            num_vector_out = 0
+            self.potential_model = EquivariantTransformer_dpm(
+                encoder = encoder,
+                processor = processor,
+                decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
+                cutoff=args.cutoff,
+                latent_dim=latent_dim,
+                embed_dim=args.embed_dim,
+                design=args.design,
+                potential_model = args.potential_model,
+                tps_condition=args.tps_condition,
+                pbc=args.pbc,
+            )
         if args.path_type == "Schrodinger_Linear":
+            print("Initializing score model")
             self.score_model = EquivariantTransformer_dpm(
                 encoder = encoder,
                 processor = processor,
@@ -61,7 +77,9 @@ class EquivariantMDGenWrapper(Wrapper):
                 latent_dim=latent_dim,
                 embed_dim=args.embed_dim,
                 design=args.design,
-                potential_model = args.potential_model
+                potential_model = args.potential_model,
+                tps_condition=args.tps_condition,
+                pbc=args.pbc,
             )
         else:
             self.score_model = None
@@ -148,24 +166,24 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                conditional_batch = torch.rand(1)[0] >= 0.7
+                # conditional_batch = torch.rand(1)[0] >= 0.7
+                conditional_batch = True
             cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
-        if self.args.potential_model:
-            return {
-                "species": species,
-                "latents": latents,
-                'loss_mask': v_loss_mask,
-                "E": batch["e_mace"],
-                'model_kwargs': {
-                    "aatype": species,
-                    'x1': latents,
-                    'v_mask': (v_loss_mask!=0).to(int),
-                    "cell": batch['cell'],
-                    "num_atoms": batch["num_atoms"],
-                    "conditions": None
-                }
-            }
-        elif (self.args.sim_condition and conditional_batch):
+        elif self.args.tps_condition:
+            cond_mask_f = torch.zeros(B, T, L, dtype=int, device=species.device)
+            cond_mask_r = torch.zeros(B, T, L, dtype=int, device=species.device)
+            cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
+            cond_mask_f[:, 0] = 1
+            cond_mask_r[:, -1] = 1
+            cond_mask[:, 1:-1] = 1
+            if self.stage == "inference":
+                conditional_batch = True
+            else:
+                # conditional_batch = torch.rand(1)[0] >= 0.7
+                conditional_batch = True
+            cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
+        if (self.args.sim_condition and conditional_batch):
+            # For sim_condition, the x and x_next are separately feeded.
             return {
                 "species": batch['species_next'],
                 "latents": batch['x_next'],
@@ -182,6 +200,32 @@ class EquivariantMDGenWrapper(Wrapper):
                         'cell': batch['cell'],
                         'species': batch['species'],
                         'num_atoms': batch['num_atoms']
+                    }
+                }
+            }
+        elif (self.args.tps_condition and conditional_batch):
+            # For tps_condition, the x[:::] are feeded together, v_mask is not necessary.
+            return {
+                "species": species,
+                "latents": latents,
+                'E': batch['e_mace'],
+                'loss_mask': batch["TKS_v_mask"]*cond_mask.unsqueeze(-1),
+                'loss_mask_potential_model': (batch["TKS_mask"]!=0).to(int)[:,:,0]*cond_mask[:,:,0],
+                'model_kwargs': {
+                    "x1": latents,
+                    'v_mask': (batch["TKS_v_mask"]!=0).to(int)*cond_mask.unsqueeze(-1),
+                    "aatype": species,
+                    "cell": batch['cell'],
+                    "num_atoms": batch["num_atoms"],
+                    "conditions": {
+                        'cond_f':{
+                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0),
+                            'mask': cond_mask_f,
+                        },
+                        'cond_r':{
+                            'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0),
+                            'mask': cond_mask_r,
+                        }
                     }
                 }
             }
@@ -207,37 +251,41 @@ class EquivariantMDGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
 
         start = time.time()
+        '''
+        out_dict = self.transport.training_losses(
+            model=self.model,
+            x1=prep['latents'],
+            aatype1=batch['species'],
+            mask=prep['loss_mask'],
+            model_kwargs=prep['model_kwargs']
+        )
+        self.log('model_dur', time.time() - start)
+        self.log('time', out_dict['t'])
+        loss_gen = out_dict['loss']
+        self.log('loss_gen', loss_gen)
+        loss = loss_gen
+        if self.score_model is not None:
+            self.log("loss_flow", out_dict['loss_flow'])
+            self.log("loss_score", out_dict['loss_score'])
+        '''
+        loss = 0.
         if self.args.potential_model:
             B,T,L,_ = prep["latents"].shape
             t = torch.ones((B,), device=prep["latents"].device)
-            energy = self.model(prep['latents'], t, **prep["model_kwargs"])
+            energy = self.potential_model(prep['latents'], t, **prep["model_kwargs"])
             energy = energy.sum(dim=2).squeeze(-1)
             # forces = -torch.autograd.grad(energy, prep['latents'])[0]
-            loss_energy = (energy - prep["E"])**2
-            loss = loss_energy
-            self.log('loss', loss)
-        else:
-            out_dict = self.transport.training_losses(
-                model=self.model,
-                x1=prep['latents'],
-                aatype1=batch['species'],
-                mask=prep['loss_mask'],
-                model_kwargs=prep['model_kwargs']
-            )
-            self.log('model_dur', time.time() - start)
-            loss = out_dict['loss']
-            self.log('loss', loss)
-            if self.score_model is not None:
-                self.log("loss_flow", out_dict['loss_flow'])
-                self.log("loss_score", out_dict['loss_score'])
+            loss_energy = (((energy -prep["E"])**2)*prep['loss_mask_potential_model']).sum(-1)
+            self.log('loss_energy', loss_energy)        
+            loss += loss_energy
+        self.log('model_dur', time.time() - start)
+        self.log('loss', loss)
 
-            self.log('time', out_dict['t'])
-
-            self.log('dur', time.time() - self.last_log_time)
-            if 'name' in batch:
-                self.log('name', ','.join(batch['name']))
-            self.log('general_step_dur', time.time() - start1)
-            self.last_log_time = time.time()
+        self.log('dur', time.time() - self.last_log_time)
+        if 'name' in batch:
+            self.log('name', ','.join(batch['name']))
+        self.log('general_step_dur', time.time() - start1)
+        self.last_log_time = time.time()
         
         return loss.mean()
 

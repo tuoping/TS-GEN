@@ -21,7 +21,7 @@ def parse_train_args():
     group.add_argument("--val_repeat", type=int, default=25)
     group.add_argument("--inference_batches", type=int, default=0)
     group.add_argument("--batch_size", type=int, default=1)
-    group.add_argument("--val_freq", type=int, default=None)
+    group.add_argument("--val_freq", type=float, default=None)
     group.add_argument("--val_epoch_freq", type=int, default=1)
     group.add_argument("--no_validate", action='store_true')
     group.add_argument("--designability_freq", type=int, default=1)
@@ -131,6 +131,7 @@ def parse_train_args():
     ## nonequil. simulation settings
     group.add_argument('--localmask', action='store_true')
     group.add_argument('--potential_model', action='store_true')
+    group.add_argument("--pbc", action='store_true')
 
     ## SDE bridge settings
     group.add_argument("--inference_steps", type=int, default=20)

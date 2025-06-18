@@ -102,6 +102,7 @@ class Wrapper(pl.LightningModule):
 
     def on_train_epoch_end(self):
         self.print_log(prefix='train', save=False)
+        torch.cuda.empty_cache()
 
     def on_validation_epoch_end(self):
         if self.args.ema:

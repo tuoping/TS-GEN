@@ -40,7 +40,7 @@ def readlog(dir, trainlosskeyword="\'train_loss\'", exclude_epochs=exclude_epoch
                                 alltrainlosses_baseline.pop(-1)
                             break
                         alltrainsteps_baseline.append(float(l[idx_t+1].replace(",","").replace("np.float64(","").replace(")","")))
-                        break
+                        # break
                     if trainlosskeyword in t:
                         alltrainlosses_baseline.append(float(l[idx_t+1].replace(",","").replace("np.float64(","").replace(")","")))
     return alltrainlosses_baseline, alltrainsteps_baseline
@@ -62,11 +62,18 @@ def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_e
             print("before_idx = ", before_idx)
         
         
-    # plt.subplot(121)
+    # remove the loss value when restart training 
+    if "loss_gen" in key:
+        stable_idx = np.where(np.array(alltrainlosses_dir_b1024)<-1.1)[0]
+    else:
+        stable_idx = np.arange(len(alltrainsteps_dir_b1024), dtype=int)
+    alltrainlosses_dir_b1024 = np.array(alltrainlosses_dir_b1024)[stable_idx]
+    alltrainsteps_dir_b1024 = np.array(alltrainsteps_dir_b1024)[stable_idx]
+    # plotting
     positive_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])>0)[0]
     negative_idx = np.where(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])<=0)[0]
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[positive_idx][::2], np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][::2], label="$L>0$", marker="x")
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx][::2], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx][::2], c="r", label="$L<0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[positive_idx], np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx], label="$L>0$", marker="x")
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx], c="r", label="$L<0$", marker="x")
     if len(positive_idx) > 0:
         plt.axhline(np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[positive_idx][-1], ls="--")
     if len(negative_idx) > 0:
@@ -89,11 +96,11 @@ else:
     before_epoch = int(sys.argv[2])
 plot_1losses(dir, after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 plot_1losses(dir, key="\'val_loss\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
-# plot_1losses(dir, key="\'train_loss_energy\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
-# plot_1losses(dir, key="\'val_loss_energy\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'train_loss_energy\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'val_loss_energy\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'train_loss_cell\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'val_loss_cell\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
-# plot_1losses(dir, key="\'train_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
-# plot_1losses(dir, key="\'val_loss_flow\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'train_loss_gen\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
+plot_1losses(dir, key="\'val_loss_gen\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'train_loss_score\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
 # plot_1losses(dir, key="\'val_loss_score\'", after_epoch=int(sys.argv[1]), before_epoch=before_epoch)
