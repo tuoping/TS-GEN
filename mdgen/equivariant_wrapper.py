@@ -251,7 +251,7 @@ class EquivariantMDGenWrapper(Wrapper):
         prep = self.prep_batch(batch)
 
         start = time.time()
-        '''
+
         out_dict = self.transport.training_losses(
             model=self.model,
             x1=prep['latents'],
@@ -267,7 +267,7 @@ class EquivariantMDGenWrapper(Wrapper):
         if self.score_model is not None:
             self.log("loss_flow", out_dict['loss_flow'])
             self.log("loss_score", out_dict['loss_score'])
-        '''
+
         loss = 0.
         if self.args.potential_model:
             B,T,L,_ = prep["latents"].shape
