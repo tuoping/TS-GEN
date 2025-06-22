@@ -132,6 +132,7 @@ def parse_train_args():
     group.add_argument('--localmask', action='store_true')
     group.add_argument('--potential_model', action='store_true')
     group.add_argument("--pbc", action='store_true')
+    group.add_argument("--guided", action='store_true')
 
     ## SDE bridge settings
     group.add_argument("--inference_steps", type=int, default=20)

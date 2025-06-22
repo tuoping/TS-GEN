@@ -466,10 +466,10 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     TKS_mask = _TKS_mask
                     TKS_v_mask = _TKS_v_mask
                     TKS_h_mask = _TKS_h_mask
-            if hasattr(dataset[0], "E_mace"):
-                e_mace = torch.stack([data.E_mace for data in dataset])
-            else:
-                e_mace = torch.zeros_like(mask)
+            # if hasattr(dataset[0], "E_mace"):
+            #     e_mace = torch.stack([data.E_mace for data in dataset])
+            # else:
+            #     e_mace = torch.zeros_like(mask)
             if self.sim_condition:
                 # disp_next = [torch.from_numpy(np.array([get_distances(dataset[i].pos[j], dataset_next[i].pos[j], dataset[i].cell, pbc=True)[0][0][0] for j in range(len(dataset[i].pos))])).to(torch.float32) for i in range(len(dataset))]
                 disp_next = [dataset[i].disp for i in range(len(dataset))]
@@ -490,7 +490,6 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "TKS_v_mask": TKS_v_mask,
                     "TKS_h_mask": TKS_h_mask,
                     "e_now": torch.stack([data.E_now for data in dataset]),
-                    "e_mace": e_mace
                 }
             else:
                 return {
@@ -504,7 +503,6 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     "v_mask": v_mask,
                     "h_mask": h_mask,
                     "e_now": torch.stack([data.E_now for data in dataset]),
-                    "e_mace": e_mace
                 }
     
     def mask_from_actions(self, idx, act_space, start_i_traj=None):
@@ -851,12 +849,11 @@ class EquivariantTransformerDataset_Transition1x(torch.utils.data.Dataset):
                 "TKS_v_mask": TKS_v_mask,
                 "TKS_h_mask": TKS_h_mask,
                 "e_now": torch.stack([data.E_now for data in dataset]),
-                "e_mace": e_mace
             }
         elif self.tps_condition:
             return {
                 "name": data.rxn,
-                'e_mace': torch.stack([torch.tensor(1000), E_barrier, torch.tensor(1000)]),
+                'e_now': torch.stack([torch.tensor(1000), E_barrier, torch.tensor(1000)]),
                 "species": torch.stack([data.z_reactant, data.z_transition_state, data.z_product]),
                 "x": torch.stack([data.pos_reactant, data.pos_transition_state, data.pos_product]),
                 "num_atoms": torch.tensor([len(data.z_reactant), len(data.z_transition_state), len(data.z_product)], dtype=torch.long),

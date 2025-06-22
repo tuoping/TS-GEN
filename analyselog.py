@@ -55,18 +55,18 @@ def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_e
     after_idx = None
     if len(alltrainlosses_dir_b1024) != 0:
         if after_epoch is not None and after_epoch != "None":
-            after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][-1]
+            after_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(after_epoch))[0][0]
             print("after_idx = ", after_idx)
         if before_epoch is not None and before_epoch != "None":
             before_idx = np.where(np.array(alltrainsteps_dir_b1024)==float(before_epoch))[0][0]
             print("before_idx = ", before_idx)
         
         
-    # remove the loss value when restart training 
-    if "loss_gen" in key:
-        stable_idx = np.where(np.array(alltrainlosses_dir_b1024)<-1.1)[0]
-    else:
-        stable_idx = np.arange(len(alltrainsteps_dir_b1024), dtype=int)
+    ### remove the loss value when restart training 
+    # if "loss_gen" in key:
+    #     stable_idx = np.where(np.array(alltrainlosses_dir_b1024)<-1.1)[0]
+    # else:
+    stable_idx = np.arange(len(alltrainsteps_dir_b1024), dtype=int)
     alltrainlosses_dir_b1024 = np.array(alltrainlosses_dir_b1024)[stable_idx]
     alltrainsteps_dir_b1024 = np.array(alltrainsteps_dir_b1024)[stable_idx]
     # plotting

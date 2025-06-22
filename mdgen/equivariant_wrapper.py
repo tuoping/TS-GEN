@@ -208,7 +208,7 @@ class EquivariantMDGenWrapper(Wrapper):
             return {
                 "species": species,
                 "latents": latents,
-                'E': batch['e_mace'],
+                'E': batch['e_now'],
                 'loss_mask': batch["TKS_v_mask"]*cond_mask.unsqueeze(-1),
                 'loss_mask_potential_model': (batch["TKS_mask"]!=0).to(int)[:,:,0]*cond_mask[:,:,0],
                 'model_kwargs': {
@@ -268,7 +268,6 @@ class EquivariantMDGenWrapper(Wrapper):
             self.log("loss_flow", out_dict['loss_flow'])
             self.log("loss_score", out_dict['loss_score'])
 
-        loss = 0.
         if self.args.potential_model:
             B,T,L,_ = prep["latents"].shape
             t = torch.ones((B,), device=prep["latents"].device)
@@ -288,6 +287,39 @@ class EquivariantMDGenWrapper(Wrapper):
         self.last_log_time = time.time()
         
         return loss.mean()
+
+    def guided_velocity(self, x, t, cell=None, 
+                num_atoms=None,
+                conditions=None,
+                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
+        B,T,L,_ = x.shape
+        # g = -torch.autograd.grad(self.potential_model(x, torch.ones((B,), device=x.device).detach().requires_grad_(False), 
+        #         cell, 
+        #         num_atoms,
+        #         conditions,
+        #         aatype, x_latt, x1, v_mask, latt_feature).sum(dim=2).squeeze(-1)[:,1], x, create_graph=False)[0]
+        
+        x = x.detach().requires_grad_(True)
+        out = self.potential_model(
+            x,
+            torch.ones((B,), device=x.device), 
+            cell, num_atoms,
+            conditions, aatype,
+            x_latt, x1, v_mask, latt_feature
+        )
+        energy = out.sum(dim=2)            # shape [B, C]
+        energy = energy.squeeze(-1)[:, 1]  # shape [B]
+        loss = energy.sum()
+        if x.grad is not None:
+            x.grad.zero_()
+        loss.backward(create_graph=False)
+        g = -x.grad
+        g = g.detach()
+        return self.model.forward_inference(x, t,                 
+                cell, 
+                num_atoms,
+                conditions,
+                aatype, x_latt, x1, v_mask, latt_feature) + 0.01*g
 
 
     def inference(self, batch, stage='inference'):
@@ -314,17 +346,24 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)
+            zs = torch.randn(B, T, N, D, device=self.device).detach().requires_grad_(True)
 
         if self.score_model is None:
             sample_fn = self.transport_sampler.sample_ode(sampling_method=self.args.sampling_method)  # default to ode
         else:
             sample_fn = self.transport_sampler.sample_sde(num_steps=self.args.inference_steps, diffusion_form=self.args.diffusion_form, diffusion_norm=torch.tensor(3))
 
-        samples = sample_fn(
-            zs,
-            partial(self.model.forward_inference, **prep['model_kwargs'])
-        )[-1]
+
+        if self.args.guided:
+            samples = sample_fn(
+                zs,
+                partial(self.guided_velocity, **prep['model_kwargs'])
+            )[-1]
+        else:
+            samples = sample_fn(
+                zs,
+                partial(self.model.forward_inference, **prep['model_kwargs'])
+            )[-1]
         
         if self.args.design:
             # vector_out = samples[..., :-self.args.num_species]
