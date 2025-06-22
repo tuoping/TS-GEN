@@ -56,8 +56,8 @@ class EquivariantMDGenWrapper(Wrapper):
             latent_dim = 3
             num_vector_out = 0
             self.potential_model = EquivariantTransformer_dpm(
-                encoder = encoder,
-                processor = processor,
+                encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
+                processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim),
                 decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
                 cutoff=args.cutoff,
                 latent_dim=latent_dim,
@@ -292,36 +292,24 @@ class EquivariantMDGenWrapper(Wrapper):
                 num_atoms=None,
                 conditions=None,
                 aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
-        B,T,L,_ = x.shape
-        # g = -torch.autograd.grad(self.potential_model(x, torch.ones((B,), device=x.device).detach().requires_grad_(False), 
-        #         cell, 
-        #         num_atoms,
-        #         conditions,
-        #         aatype, x_latt, x1, v_mask, latt_feature).sum(dim=2).squeeze(-1)[:,1], x, create_graph=False)[0]
-        
-        x = x.detach().requires_grad_(True)
-        out = self.potential_model(
-            x,
-            torch.ones((B,), device=x.device), 
-            cell, num_atoms,
-            conditions, aatype,
-            x_latt, x1, v_mask, latt_feature
-        )
-        energy = out.sum(dim=2)            # shape [B, C]
-        energy = energy.squeeze(-1)[:, 1]  # shape [B]
-        loss = energy.sum()
-        if x.grad is not None:
-            x.grad.zero_()
-        loss.backward(create_graph=False)
-        g = -x.grad
-        g = g.detach()
-        return self.model.forward_inference(x, t,                 
+        v = self.model.forward_inference(x, t,                 
                 cell, 
                 num_atoms,
                 conditions,
-                aatype, x_latt, x1, v_mask, latt_feature) + 0.01*g
+                aatype, x_latt, x1, v_mask, latt_feature)
+                
+        B,T,L,_ = x.shape
+        with torch.enable_grad():
+            x = x.detach().requires_grad_(True)
+            g = -torch.autograd.grad(self.potential_model(x, torch.ones((B,), device=x.device).detach().requires_grad_(False), 
+                    cell, 
+                    num_atoms,
+                    conditions,
+                    aatype, x_latt, x1, v_mask, latt_feature).sum(dim=2).squeeze(-1)[:,1], x, create_graph=False)[0].detach()
 
+        return + 0.01*g
 
+    
     def inference(self, batch, stage='inference'):
         self.stage = stage
         prep = self.prep_batch(batch)
@@ -355,10 +343,11 @@ class EquivariantMDGenWrapper(Wrapper):
 
 
         if self.args.guided:
-            samples = sample_fn(
-                zs,
-                partial(self.guided_velocity, **prep['model_kwargs'])
-            )[-1]
+            with torch.no_grad():
+                samples = sample_fn(
+                    zs,
+                    partial(self.guided_velocity, **prep['model_kwargs'])
+                )[-1]
         else:
             samples = sample_fn(
                 zs,
