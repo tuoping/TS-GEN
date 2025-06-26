@@ -207,6 +207,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         
         self.num_species = num_species
         self.embed_dim = embed_dim
+        
 
     def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, out_cond=None) -> Tuple[Tensor, Tensor]:
         h, v, edge_attr = self.encoder(species, edge_index, edge_attr, edge_vec, t)
@@ -215,8 +216,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         if self.tps_condition and out_cond is not None:
             cond_f = out_cond["cond_f"]
             cond_r = out_cond["cond_r"]
-            h = h + self.cond_to_emb_f(cond_f['x'].reshape(-1,3)) + self.mask_to_emb_f(cond_f["mask"].reshape(-1))
-            h = h + self.cond_to_emb_r(cond_r['x'].reshape(-1,3)) + self.mask_to_emb_r(cond_r["mask"].reshape(-1))
+            h = h + self.cond_to_emb_f(cond_f['x']) + self.mask_to_emb_f(cond_f["mask"])
+            h = h + self.cond_to_emb_r(cond_r['x']) + self.mask_to_emb_r(cond_r["mask"])
         else:
             if out_cond is not None:
                 if self.pbc:
@@ -477,7 +478,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             species = aatype
         else:
             aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species, dtype=torch.float)
+            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species).to(torch.float)
             
         scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), out_cond)
         if self.design:
