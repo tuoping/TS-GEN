@@ -17,6 +17,7 @@ parser.add_argument('--split', type=str, default='splits/4AA_test.csv')
 parser.add_argument('--chunk_idx', type=int, default=0)
 parser.add_argument('--n_chunks', type=int, default=1)
 parser.add_argument('--stride', type=int, default=1)
+parser.add_argument('--likelihood', action='store_true')
 args = parser.parse_args()
 import mdgen.analysis
 import os, torch, mdtraj, tqdm
@@ -44,31 +45,47 @@ def temp_seed(seed):
 os.makedirs(args.out_dir, exist_ok=True)
 
 def get_sample(arr, seqres, start_idxs, end_idxs, start_state, end_state, num_frames=1000):
-    start_idx = np.random.choice(start_idxs, 1).item()
-    end_idx = np.random.choice(end_idxs, 1).item()
+    start_idx = np.random.choice(start_idxs[np.where(start_idxs < end_idxs.max()-num_frames)[0]], 1).item()
+    end_idx = np.random.choice(end_idxs[np.where(end_idxs >= start_idx+num_frames)[0]], 1).item()
+    interval_idx = (end_idx - start_idx) // num_frames
+    end_idx = start_idx + interval_idx * num_frames
+    # end_idx = start_idx + num_frames
+    print('start_idx', start_idx, 'end_idx', end_idx, 'interval_idx', interval_idx)
 
     start_arr = np.copy(arr[start_idx:start_idx + 1]).astype(np.float32)
     end_arr = np.copy(arr[end_idx:end_idx + 1]).astype(np.float32)
     seqres = torch.tensor([restype_order[c] for c in seqres]).unsqueeze(0)
-
     start_frames = atom14_to_frames(torch.from_numpy(start_arr))
 
     start_atom37 = torch.from_numpy(atom14_to_atom37(start_arr, seqres)).float()
     start_torsions, start_torsion_mask = atom37_to_torsions(start_atom37, seqres[None])
-    
     end_frames = atom14_to_frames(torch.from_numpy(end_arr))
     end_atom37 = torch.from_numpy(atom14_to_atom37(end_arr, seqres)).float()
     end_torsions, end_torsion_mask = atom37_to_torsions(end_atom37, seqres[None])
     L = start_frames.shape[1]
-    traj_torsions = start_torsions.expand(num_frames, -1, -1, -1).clone()
-    traj_torsions[-1] = end_torsions
+    
+    traj_frames = atom14_to_frames(torch.from_numpy(arr[start_idx:end_idx+1:interval_idx]))
+    traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[start_idx:end_idx+1:interval_idx], seqres)).float()
+    traj_torsions = atom37_to_torsions(traj_atom37, seqres[None])[0]
+    traj_trans = traj_frames._trans.clone()
+    traj_rots = traj_frames._rots._rot_mats.clone()
+    # for idx in range(start_idx, end_idx + 1, interval_idx):
+    #     if idx == start_idx:
+    #         traj_frames = atom14_to_frames(torch.from_numpy(arr[idx:idx+1]))
+    #         traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[idx:idx+1], seqres)).float()
+    #         traj_torsions = atom37_to_torsions(traj_atom37, seqres[None])[0]
+    #         traj_trans = traj_frames._trans.clone()
+    #         traj_rots = traj_frames._rots._rot_mats.clone()
+    #     else:
+    #         traj_frames = atom14_to_frames(torch.from_numpy(arr[idx:idx+1]))
+    #         traj_atom37 = torch.from_numpy(atom14_to_atom37(arr[idx:idx+1], seqres)).float()
+    #         traj_torsions = torch.cat([traj_torsions, atom37_to_torsions(traj_atom37, seqres[None])[0]], dim=0)
+    #         traj_trans = torch.cat([traj_trans, traj_frames._trans.clone()], dim=0)
+    #         traj_rots = torch.cat([traj_rots, traj_frames._rots._rot_mats.clone()], dim=0)
 
-    traj_trans = start_frames._trans.expand(num_frames, -1, -1).clone()
-    traj_trans[-1] = end_frames._trans
-
-    traj_rots = start_frames._rots._rot_mats.expand(num_frames, -1, -1, -1).clone()
-    traj_rots[-1] = end_frames._rots._rot_mats
-
+    assert traj_trans.shape[0] == num_frames + 1
+    assert traj_rots.shape[0] == num_frames + 1
+    assert traj_torsions.shape[0] == num_frames + 1
     mask = torch.ones(L)
     return {
         'torsions': traj_torsions,
@@ -123,7 +140,9 @@ def do(model, name, seqres):
         return
 
     arr = np.lib.format.open_memmap(f'{args.data_dir}/{name}{args.suffix}.npy', 'r')
-
+    if args.likelihood:
+        ofile_freeE_forward = open(os.path.join(args.out_dir, f"{name}_freeE_forward.dat"), "wb")
+        ofile_freeE_reverse = open(os.path.join(args.out_dir, f"{name}_freeE_reverse.dat"), "wb")
     metadata = []
     for i in tqdm.tqdm(range(args.num_batches), desc='num batch'):
         batch_list = []
@@ -134,16 +153,24 @@ def do(model, name, seqres):
         batch = tensor_tree_map(lambda x: x.cuda(), batch)
         print('Start tps for ', name, 'with start coords', batch['trans'][0, 0, 0])
         print('Start tps for ', name, 'with end coords', batch['trans'][0, -1, 0])
-        atom14s, _ = model.inference(batch)
+        if args.likelihood:
+            atom14s, _, freeE_forward, freeE_reverse = model.likelihood_inference(batch)
+        else:
+            atom14s, _ = model.inference(batch)
         for j in range(args.batch_size):
             idx = i * args.batch_size + j
             path = os.path.join(args.out_dir, f'{name}_{idx}.pdb')
-            atom14_to_pdb(atom14s[j].cpu().numpy(), batch['seqres'][0].cpu().numpy(), path)
+            atom14_to_pdb(atom14s[j].detach().cpu().numpy(), batch['seqres'][0].cpu().numpy(), path)
 
             traj = mdtraj.load(path)
             traj.superpose(traj)
             traj.save(os.path.join(args.out_dir, f'{name}_{idx}.xtc'))
             traj[0].save(os.path.join(args.out_dir, f'{name}_{idx}.pdb'))
+            if args.likelihood:
+                np.savetxt(ofile_freeE_forward, freeE_forward.detach().cpu().numpy(), fmt="%12.4e", delimiter=" ")
+                np.savetxt(ofile_freeE_reverse, freeE_reverse.detach().cpu().numpy(), fmt="%12.4e", delimiter=" ")
+                ofile_freeE_forward.flush()
+                ofile_freeE_reverse.flush()
             metadata.append({
                 'name': name,
                 'start_idx': batch['start_idx'][j].cpu().item(),
@@ -153,6 +180,9 @@ def do(model, name, seqres):
                 'path': path,
             })
     json.dump(metadata, open(f'{args.out_dir}/{name}_metadata.json', 'w'))
+    if args.likelihood:
+        ofile_freeE_forward.close()
+        ofile_freeE_reverse.close()
 
 
 @torch.no_grad()
@@ -174,5 +204,25 @@ def main():
             continue
         do(model, name, df.seqres[name])
 
+def main_likelihood():
+    checkpoint = torch.load(args.sim_ckpt, weights_only=False)  # Explicitly allow full load
+    model = NewMDGenWrapper(**checkpoint["hyper_parameters"])
+    model.load_state_dict(checkpoint["state_dict"])
+    model.eval().to('cuda')
+    df = pd.read_csv(args.split, index_col='name')
+    names = np.array(df.index)
 
-main()
+    chunks = np.array_split(names, args.n_chunks)
+    chunk = chunks[args.chunk_idx]
+    print('#' * 20)
+    print(f'RUN NUMBER: {args.chunk_idx}, PROCESSING IDXS {args.chunk_idx * len(chunk)}-{(args.chunk_idx + 1) * len(chunk)}')
+    print('#' * 20)
+    for name in tqdm.tqdm(chunk, desc='num peptides'):
+        if args.pdb_id and name not in args.pdb_id:
+            continue
+        do(model, name, df.seqres[name])
+
+if args.likelihood:
+    main_likelihood()
+else:
+    main()

@@ -50,7 +50,7 @@ def main(name):
 
     fig, axs = plt.subplots(6, 4, figsize=(20, 20))
 
-    pyemma.plots.plot_free_energy(*tica.transform(gen_traj_cat)[:, :2].T, ax=axs[0, 1], cbar=False)
+    pyemma.plots.plot_free_energy(*tica.transform(gen_traj_cat)[::10, :2].T, ax=axs[0, 1], cbar=False)
     axs[0, 1].scatter(tica.transform(ref)[start_idx, 0], tica.transform(ref)[start_idx, 1], s=200, c='black')
     axs[0, 1].scatter(tica.transform(ref)[end_idx, 0], tica.transform(ref)[end_idx, 1], s=200, c='black')
     axs[0, 1].set_title('Transition Path Ensemble')

@@ -134,6 +134,16 @@ class ICPlan:
         ut = self.compute_ut(t, x0, x1, xt)
         return t, xt, ut
     
+    def plan_schrodinger_bridge(self, t, x0, x1, diffusion):
+        """
+        Plan for Schrodinger equation
+        diffusion = (g(t)**2)/2
+        """
+        xt = self.compute_xt(t, x0, x1)
+        ut = (1-2*t)/(t*(1-t)) * (xt - (t*x1 - (1-t)*x0)) + (x1-x0)
+        score = (t*x1+(1-t)*x0 -xt)/(2*diffusion)/t/(1-t)
+        return t, xt, ut, score
+
 
 class VPCPlan(ICPlan):
     """class for VP path flow matching"""

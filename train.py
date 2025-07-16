@@ -3,7 +3,7 @@ args = parse_train_args()
 from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
-import torch, os, wandb
+import torch, os
 from mdgen.dataset import MDGenDataset
 from mdgen.wrapper import NewMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
@@ -42,6 +42,8 @@ val_loader = torch.utils.data.DataLoader(
     num_workers=args.num_workers,
 )
 model = NewMDGenWrapper(args)
+# checkpoint = torch.load(args.ckpt, weights_only=False)
+# model.load_state_dict(checkpoint["state_dict"])
     
 trainer = pl.Trainer(
     accelerator="gpu" if torch.cuda.is_available() else 'auto',

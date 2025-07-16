@@ -1,6 +1,11 @@
-data/
+data
 workdir
-submit.sh
+submit*
 *.ckpt
 *.ipynb
 python=3.10
+slurm-*
+mdgen/__pycache__
+*.log
+*.xyz
+misc_notebooks/check*

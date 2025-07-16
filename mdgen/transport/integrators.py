@@ -17,7 +17,10 @@ class sde:
         assert t0 < t1, "SDE sampler has to be in forward time"
 
         self.inference_steps = num_steps
-        self.t = th.linspace(t0, t1, num_steps)
+        # self.t = th.linspace(t0, t1, num_steps)
+        alpha = 2.0
+        u = th.linspace(0, 1, num_steps)
+        self.t = t1 - (t1 - t0) * (1 - u)**alpha
         self.dt = self.t[1] - self.t[0]
         self.drift = drift
         self.diffusion = diffusion
@@ -93,7 +96,6 @@ class ode:
         self.sampler_type = sampler_type
 
     def sample(self, x, model, **model_kwargs):
-        
         device = x[0].device if isinstance(x, tuple) else x.device
         def _fn(t, x):
             t = th.ones(x[0].size(0)).to(device) * t if isinstance(x, tuple) else th.ones(x.size(0)).to(device) * t
