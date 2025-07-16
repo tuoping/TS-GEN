@@ -1,4 +1,4 @@
-# TS-Gen
+# TS-GEN
 
 Implementation of [Accurate generation of chemical reaction transition states by conditional flow matching](https://arxiv.org/abs/2507.10530) by Ping Tuo*, Jiale Chen, Ju Li*.
 
