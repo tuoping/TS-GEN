@@ -2,7 +2,7 @@
 
 Implementation of [Accurate generation of chemical reaction transition states by conditional flow matching](https://arxiv.org/abs/2507.10530) by Ping Tuo*, Jiale Chen, Ju Li*.
 
-We introduce ODE-based generative modeling for transition states of chemical reactions. The model achieve a root-mean-square deviation of $0.004 \AA$ in saddle point configurations, while requiring only $0.06$ second GPU time per inference. We used classifier-free guidance by the reactant and product configurations to intentionally train mode collapse towards the target transition state in the ODE model, which ensured accuracy and robustness. The model is validated on chemical reactions out of the training set, demonstrating generalizability. Methodological details and further evaluations can be found in the paper. Please feel free to reach out to us at tuoping@berkeley.edu, liju@mit.edu with any questions.
+We introduce ODE-based generative modeling for transition states of chemical reactions. The model achieve a root-mean-square deviation of 0.004 Å in saddle point configurations, while requiring only $0.06$ second GPU time per inference. We used classifier-free guidance by the reactant and product configurations to intentionally train mode collapse towards the target transition state in the ODE model, which ensured accuracy and robustness. The model is validated on chemical reactions out of the training set, demonstrating generalizability. Methodological details and further evaluations can be found in the paper. Please feel free to reach out to us at tuoping@berkeley.edu, liju@mit.edu with any questions.
 
 
 ![algo.png](algo_schematic.png)
@@ -46,6 +46,7 @@ python train-Transition1x-equivariant.py --tps_condition --data_dir data/Transit
 
 The model weights used in the paper may be downloaded here:
 ```
+Will be released with official publication of the paper via the publisher.
 ```
 
 ## Inference
