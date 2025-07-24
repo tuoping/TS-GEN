@@ -56,6 +56,11 @@ Inference by `notebooks/Transition1x-checkgraph-inference.ipynb`
 
 Error against reference by `scripts/calculate_err.ipynb`, where we use [MACE-OFF](https://github.com/ACEsuit/mace-off) model to evaluate the energies of the generated and reference configurations.
 
+## *To be Noted*
+
+- Periodic boundary condition need to be specifically turned on by `--pbc`.
+- When "--pbc" is enforced, the condition embedding for '--tps_condition' or '--sim_condition' is also read periodically, and the node features instead of the raw coordinates are embedded as input conditions.
+
 ## License
 
 MIT. Additional licenses may apply for third-party source code noted in file headers.
