@@ -46,7 +46,7 @@ python train-Transition1x-equivariant.py --tps_condition --data_dir data/Transit
 
 The model weights used in the paper may be downloaded here:
 ```
-Will be released with official publication of the paper via the publisher.
+Transition state predictor trained on Transition1x database is provided in the `./checkpoints/` directory.
 ```
 
 ## Inference
