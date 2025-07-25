@@ -2,7 +2,6 @@ data
 workdir
 submit*
 *.ckpt
-*.ipynb
 python=3.10
 slurm-*
 mdgen/__pycache__
