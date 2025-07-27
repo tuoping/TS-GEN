@@ -1,0 +1,10 @@
+data
+workdir
+submit*
+*.ckpt
+python=3.10
+slurm-*
+mdgen/__pycache__
+*.log
+*.xyz
+misc_notebooks/check*
