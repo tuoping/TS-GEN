@@ -162,6 +162,10 @@ class EquivariantMDGenWrapper(Wrapper):
         assert _ == 3, f"latents shape should be (B, T, D, 3), but got {latents.shape}"
         ########
         
+        if "TKS_mask" not in batch.keys():
+            batch['TKS_mask'] = torch.ones(B,T,L, dtype=int, device=species.device)
+            batch['TKS_v_mask'] = torch.ones(B,T,L,3, dtype=int, device=species.device)
+
         if self.args.sim_condition:
             cond_mask = torch.zeros(B, T, L, dtype=int, device=species.device)
             cond_mask[:, 0] = 1
