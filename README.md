@@ -61,7 +61,7 @@ Error against reference by `scripts/calculate_err.ipynb`, where we use [MACE-OFF
 ## *To be Noted*
 
 - Periodic boundary condition need to be specifically turned on by `--pbc`.
-- When "--pbc" is enforced, the condition embedding for '--tps_condition' or '--sim_condition' is also read periodically, and the node features instead of the raw coordinates are embedded as input conditions.
+  - When "--pbc" is enforced, the condition embedding for '--tps_condition' or '--sim_condition' is also read periodically, and the node features (equivarient by the equivarient transformer) instead of the raw coordinates are embedded as input conditions.
 
 ## License
 
