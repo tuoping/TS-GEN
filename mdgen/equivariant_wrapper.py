@@ -42,13 +42,14 @@ class EquivariantMDGenWrapper(Wrapper):
         self.model = EquivariantTransformer_dpm(
             encoder = encoder,
             processor = processor,
-            decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
+            decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out, num_species=args.num_species),
             cutoff=args.cutoff,
             latent_dim=latent_dim,
             embed_dim=args.embed_dim,
             design=args.design,
             potential_model = False,
             tps_condition=args.tps_condition,
+            num_species=args.num_species,
             pbc=args.pbc,
         )
         if args.potential_model:
@@ -58,13 +59,14 @@ class EquivariantMDGenWrapper(Wrapper):
             self.potential_model = EquivariantTransformer_dpm(
                 encoder = Encoder_dpm(num_species, args.embed_dim, 4, args.edge_dim, input_dim=1),
                 processor = Processor(num_convs=args.num_convs, node_dim=args.embed_dim, num_heads=args.num_heads, ff_dim=args.ff_dim, edge_dim=args.edge_dim),
-                decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out),
+                decoder = Decoder(dim=args.embed_dim, num_scalar_out=num_scalar_out, num_vector_out=num_vector_out, num_species=args.num_species),
                 cutoff=args.cutoff,
                 latent_dim=latent_dim,
                 embed_dim=args.embed_dim,
                 design=args.design,
                 potential_model = args.potential_model,
                 tps_condition=args.tps_condition,
+                num_species=args.num_species,
                 pbc=args.pbc,
             )
         if args.path_type == "Schrodinger_Linear":
