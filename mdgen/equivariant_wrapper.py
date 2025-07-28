@@ -170,7 +170,6 @@ class EquivariantMDGenWrapper(Wrapper):
             else:
                 # conditional_batch = torch.rand(1)[0] >= 0.7
                 conditional_batch = True
-            cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
         elif self.args.tps_condition:
             cond_mask_f = torch.zeros(B, T, L, dtype=int, device=species.device)
             cond_mask_r = torch.zeros(B, T, L, dtype=int, device=species.device)
@@ -183,7 +182,7 @@ class EquivariantMDGenWrapper(Wrapper):
             else:
                 # conditional_batch = torch.rand(1)[0] >= 0.7
                 conditional_batch = True
-            cond_mask = (cond_mask*(batch["TKS_mask"]!=0)) # only keep the AND set of cond_mask and mask
+
         if (self.args.sim_condition and conditional_batch):
             # For sim_condition, the x and x_next are separately feeded.
             return {
@@ -198,7 +197,7 @@ class EquivariantMDGenWrapper(Wrapper):
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
                         'x':torch.where(cond_mask.unsqueeze(-1).bool(), latents, 0.0),
-                        "mask": cond_mask,
+                        "mask": cond_mask*(batch["TKS_mask"]!=0),
                         'cell': batch['cell'],
                         'species': batch['species'],
                         'num_atoms': batch['num_atoms']
@@ -222,11 +221,11 @@ class EquivariantMDGenWrapper(Wrapper):
                     "conditions": {
                         'cond_f':{
                             'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': cond_mask_f.reshape(-1),
+                            'mask': (batch["TKS_v_mask"]!=0).to(int)*cond_mask_f.reshape(-1),
                         },
                         'cond_r':{
                             'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': cond_mask_r.reshape(-1),
+                            'mask': (batch["TKS_v_mask"]!=0).to(int)*cond_mask_r.reshape(-1),
                         }
                     }
                 }
