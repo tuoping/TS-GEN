@@ -225,11 +225,11 @@ class EquivariantMDGenWrapper(Wrapper):
                     "conditions": {
                         'cond_f':{
                             'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': (batch["TKS_v_mask"]!=0).to(int)*cond_mask_f.reshape(-1),
+                            'mask': cond_mask_f.reshape(-1),
                         },
                         'cond_r':{
                             'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': (batch["TKS_v_mask"]!=0).to(int)*cond_mask_r.reshape(-1),
+                            'mask': cond_mask_r.reshape(-1),
                         }
                     }
                 }
