@@ -48,10 +48,7 @@ val_loader = torch.utils.data.DataLoader(
 )
 
 
-# model = EquivariantMDGenWrapper(args)
-checkpoint = torch.load(args.ckpt, weights_only=False)
-model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
-model.load_state_dict(checkpoint["state_dict"], strict=False)
+model = EquivariantMDGenWrapper(args)
 
 trainer = pl.Trainer(
     accelerator="gpu" if torch.cuda.is_available() else 'auto',
@@ -84,8 +81,8 @@ trainer = pl.Trainer(
 
 
 if args.validate:
-    # trainer.validate(model, val_loader, ckpt_path=args.ckpt)
-    trainer.validate(model, val_loader)
+    trainer.validate(model, val_loader, ckpt_path=args.ckpt)
+    #trainer.validate(model, val_loader)
 else:
-    # trainer.fit(model, train_loader, val_loader, ckpt_path=args.ckpt)
-    trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, train_loader, val_loader, ckpt_path=args.ckpt)
+    #trainer.fit(model, train_loader, val_loader)

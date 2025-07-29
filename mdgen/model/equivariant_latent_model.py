@@ -226,14 +226,13 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                     edge_vec_cond = out_cond["distance_vec"]
                     edge_attr_cond = torch.hstack([edge_vec_cond, edge_len_cond.view(-1, 1)])
                     species_cond = out_cond["species"]
-                    h_cond, v_cond, edge_attr_cond = self.encoder(
+                    h_cond, v_cond, edge_attr_cond = out_cond['model'].encoder(
                         species_cond.view(-1,self.num_species), 
                         edge_index_cond, edge_attr_cond, edge_vec_cond, 
-                        torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
+                        torch.ones([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
                         )
-                    h_cond, v_cond = self.processor(h_cond, v_cond, edge_index_cond, edge_attr_cond, edge_len=torch.linalg.norm(edge_vec_cond, dim=1, keepdim=True))
-                    h = h + self.h_cond_to_emb(h_cond) 
-                    # h = h + self.v_cond_to_emb(v_cond.reshape(-1,3*self.embed_dim)) 
+                    h_cond, v_cond = out_cond['model'].processor(h_cond, v_cond, edge_index_cond, edge_attr_cond, edge_len=torch.linalg.norm(edge_vec_cond, dim=1, keepdim=True))
+                    h = h + self.h_cond_to_emb(h_cond)
                     h = h + self.mask_to_emb(out_cond["mask"].reshape(-1))
                 else:
                     h = h + self.cond_to_emb(out_cond["x"].reshape(-1,3)) + self.mask_to_emb(out_cond["mask"].reshape(-1))
@@ -427,7 +426,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 max_cell_images_per_dim=self.max_cell_images_per_dim,
             )
             if conditions is not None and self.pbc:
-                self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
+                edge_index_cond, to_jimages_cond, num_bonds_cond = radius_graph_pbc(
                     cart_coords=conditions["x"].view(-1, 3),
                     lattice=conditions["cell"].view(-1, 3, 3),
                     num_atoms=conditions["num_atoms"].view(-1),
@@ -453,17 +452,18 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             if self.pbc:
                 out_cond = get_pbc_distances(
                     conditions["x"].view(-1, 3),
-                    self.edge_index_cond,
+                    edge_index_cond,
                     conditions["cell"].view(-1, 3, 3),
-                    self.to_jimages_cond,
+                    to_jimages_cond,
                     conditions["num_atoms"].view(-1),
-                    self.num_bonds_cond,
+                    num_bonds_cond,
                     coord_is_cart=True,
                     return_offsets=True,
                     return_distance_vec=True,
                 )
                 out_cond["species"] = conditions["species"]
                 out_cond["mask"] = conditions["mask"]
+                out_cond['model'] = conditions['model']
             else:
                 out_cond = conditions
         else:

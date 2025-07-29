@@ -274,7 +274,7 @@ def calculate_rdf_pair(
 
     return r_values, g_r, integral_g_r
 
-from mace.calculators import MACECalculator
+# from mace.calculators import MACECalculator
 
 class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
     def __init__(self, traj_dirname, cutoff, num_species=5, num_frames=None, random_starting_point=True, localmask=False, sim_condition=True, stage="train"):
@@ -426,9 +426,11 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
             T,L,_ = x.shape
             # log_mask = -LSS_reward - self.partition
             ### Normalize over each trajectory
-            log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+            # log_mask = -LSS_reward - torch.logsumexp(-LSS_reward_pool, dim=0)
+            log_mask = torch.zeros(T)
             if self.sim_condition:
-                TKS_log_mask = -TKS_reward - torch.logsumexp(-TKS_reward_pool, dim=0) 
+                # TKS_log_mask = -TKS_reward - torch.logsumexp(-TKS_reward_pool, dim=0) 
+                TKS_log_mask = torch.zeros(T)
                 
             _mask = torch.exp(log_mask)[:,None] # T,L
             _v_mask = _mask.unsqueeze(-1).expand(-1,-1,3) # T,L,3
@@ -440,6 +442,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
 
             if self.localmask:
                 # disp_mask = (torch.stack([data.disp for data in dataset]).norm(dim=-1)>1).unsqueeze(-1)
+                ### Initiating masks
                 mask = torch.ones([T,L])
                 v_mask = torch.ones([T,L,3])
                 h_mask = torch.ones([T,L,self.num_species])
@@ -447,6 +450,7 @@ class EquivariantTransformerDataset_CrCoNi(torch.utils.data.Dataset):
                     TKS_mask = torch.ones([T,L])
                     TKS_v_mask = torch.ones([T,L,3])
                     TKS_h_mask = torch.ones([T,L,self.num_species])
+                ### Applying the action space
                 for i_traj in range(start_i_traj, end_i_traj):
                     disp_mask = torch.zeros([L])
                     act_space_i = act_space[i_traj]
