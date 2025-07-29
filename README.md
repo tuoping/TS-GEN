@@ -46,7 +46,7 @@ python train-Transition1x-equivariant.py --tps_condition --data_dir data/Transit
 
 The model weights used in the paper may be downloaded here:
 ```
-wget https://drive.google.com/file/d/1V_5jwi0hHoy-E7eLeUcmHIOGHWzGSxXf/view?usp=drive_link
+wget https://drive.google.com/file/d/1V_5jwi0hHoy-E7eLeUcmHIOGHWzGSxXf/view?usp=sharing
 ```
 
 
