@@ -61,6 +61,7 @@ def parse_train_args():
 
     ### Masking settings
     group = parser.add_argument_group("Masking settings")
+    group.add_argument('--localmask', action='store_true')
 
     ## Ablations settings
     group = parser.add_argument_group("Ablations settings")
@@ -106,7 +107,6 @@ def parse_train_args():
     group.add_argument('--cutoff', type=float, default=2.5)
     
     ## nonequil. simulation settings
-    group.add_argument('--localmask', action='store_true')
     group.add_argument('--potential_model', action='store_true')
     group.add_argument("--pbc", action='store_true')
     group.add_argument("--guided", action='store_true')
