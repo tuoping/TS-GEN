@@ -99,7 +99,6 @@ def parse_train_args():
     ## video settings
     group = parser.add_argument_group("Video settings")
     group.add_argument('--tps_condition', action='store_true')
-    group.add_argument('--fed_condition', action='store_true')
     group.add_argument('--design', action='store_true')
     group.add_argument('--design_from_traj', action='store_true')
     group.add_argument('--sim_condition', action='store_true')
