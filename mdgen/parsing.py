@@ -61,17 +61,9 @@ def parse_train_args():
 
     ### Masking settings
     group = parser.add_argument_group("Masking settings")
-    group.add_argument('--design_key_frames', action='store_true')
-    group.add_argument('--no_aa_emb', action='store_true')
-    group.add_argument("--no_torsion", action='store_true')
-    group.add_argument("--no_design_torsion", action='store_true')
-    group.add_argument("--supervise_no_torsions", action='store_true')
-    group.add_argument("--supervise_all_torsions", action='store_true')
 
     ## Ablations settings
     group = parser.add_argument_group("Ablations settings")
-    group.add_argument('--no_offsets', action='store_true')
-    group.add_argument('--no_frames', action='store_true')
     
     
     ## Model settings
