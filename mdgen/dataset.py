@@ -822,7 +822,8 @@ class EquivariantTransformerDataset_Transition1x(torch.utils.data.Dataset):
             E_barrier = data.E_transition_state - data.E_reactant
             TKS_reward = -E_barrier - self.TKS_partition  # 1
             TKS_mask = torch.zeros(3,L)
-            TKS_mask[1] = torch.exp(TKS_reward) # 1,L
+            # TKS_mask[1] = torch.exp(TKS_reward) # 1,L
+            TKS_mask[1] = torch.ones(1,L)
             TKS_v_mask = TKS_mask.unsqueeze(-1).expand(-1,-1,3)
             TKS_h_mask = TKS_mask.unsqueeze(-1).expand(-1,-1,self.num_species) # 1,L,num_species
         assert len(data.z_reactant)==len(data.z_product)
