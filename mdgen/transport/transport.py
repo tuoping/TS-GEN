@@ -201,9 +201,9 @@ class Transport:
         
         B = x1.shape[0]
         assert t.shape == (B,)
-        model_output = model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
+        model_output = model(xt*(mask!=0)+x1*(1-(mask!=0)) , t, **model_kwargs)
         if self.score_model is not None:
-            score_model_output = self.score_model(xt*(mask!=0)+x1*(~(mask!=0)) , t, **model_kwargs)
+            score_model_output = self.score_model(xt*(mask!=0)+x1*(1-(mask!=0)) , t, **model_kwargs)
             
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)
