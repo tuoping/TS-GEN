@@ -14,8 +14,6 @@ def parse_train_args():
     group = parser.add_argument_group("Epoch settings")
     group.add_argument("--epochs", type=int, default=1000)
     group.add_argument("--overfit", action='store_true')
-    group.add_argument("--overfit_peptide", type=str, default=None)
-    group.add_argument("--overfit_frame", action='store_true')
     group.add_argument("--train_batches", type=int, default=None)
     group.add_argument("--val_batches", type=int, default=None)
     group.add_argument("--val_repeat", type=int, default=25)
@@ -97,7 +95,7 @@ def parse_train_args():
     group.add_argument('--num_convs', type=int, default=5)
     group.add_argument('--num_heads', type=int, default=4)
     group.add_argument('--ff_dim', type=int, default=64)
-    group.add_argument('--cutoff', type=float, default=2.5)
+    group.add_argument('--cutoff', type=float, default=12)
     
     ## nonequil. simulation settings
     group.add_argument('--potential_model', action='store_true')
