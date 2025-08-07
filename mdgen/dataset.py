@@ -691,7 +691,7 @@ class EquivariantTransformerDataset_MaterialProject(torch.utils.data.Dataset):
     
 
 class EquivariantTransformerDataset_Transition1x(torch.utils.data.Dataset):
-    def __init__(self, data_dirname, num_species=4, sim_condition=False, tps_condition=True, stage="train"):
+    def __init__(self, data_dirname, num_species=5, sim_condition=False, tps_condition=True, stage="train"):
         temperature = 300
         self.kT = temperature*8.617*10**-5
         self.dataset = torch.load(os.path.join(data_dirname, f"{stage}.pt"))
