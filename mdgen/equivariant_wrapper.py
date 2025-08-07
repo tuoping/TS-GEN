@@ -364,7 +364,7 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_now"]
             logits = samples[..., -self.args.num_species:]
         else:
-            vector_out = samples*prep["loss_mask"] + prep["latents"]*(1-prep["loss_mask"])
+            vector_out = samples *prep["model_kwargs"]['v_mask'] + prep["latents"]*(1-prep["model_kwargs"]['v_mask'])
 
         if self.args.design:
             aa_out = torch.argmax(logits, -1)

@@ -501,16 +501,16 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             x_ = x_latt
             aatype_ = x
             if v_mask is not None:
-                x_ = x_*v_mask+x1*(~v_mask)
+                x_ = x_*v_mask+x1*(1-v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
             return scaler_out*v_mask
         elif self.potential_model:
             if v_mask is not None:
-                x = x*v_mask+x1*(~v_mask)
+                x = x*v_mask+x1*(1-v_mask)
             scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
             return scaler_out
         else:
-            x = x*v_mask+x1*(~v_mask)
+            x = x*v_mask+x1*(1-v_mask)
             if latt_feature is not None:
                 assert not torch.isnan(latt_feature['cell']).any()
                 vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
@@ -527,16 +527,16 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             x_ = x_latt
             aatype_ = x
             if v_mask is not None:
-                x_ = x_*v_mask+x1*(~v_mask)
+                x_ = x_*v_mask+x1*(1-v_mask)
             scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
             return scaler_out*v_mask
         elif self.potential_model:
             if v_mask is not None:
-                x = x*v_mask+x1*(~v_mask)
+                x = x*v_mask+x1*(1-v_mask)
             scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
             return scaler_out
         else:
-            x = x*v_mask+x1*(~v_mask)
+            x = x*v_mask+x1*(1-v_mask)
             if latt_feature is not None:
                 vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
             else:
