@@ -661,7 +661,7 @@ class TransformerProcessor(nn.Module):
         B,T,N,D,_ = x.shape
         # h = x[..., 0] 
         # v = x[..., 1:]
-        x = x*v_mask+x1*(~v_mask)
+        x = x*v_mask+x1*(1-v_mask)
         x = x + self.embed_time(t)[None,None,None,:,None]
         x_out = self.inference(x.reshape(B*T*N,D,4))
         return x_out.reshape(B,T,N,D,4)
@@ -671,7 +671,7 @@ class TransformerProcessor(nn.Module):
         B,T,N,D,_ = x.shape
         # h = x[..., 0] 
         # v = x[..., 1:]
-        x = x*v_mask+x1*(~v_mask)
+        x = x*v_mask+x1*(1-v_mask)
         x = x + self.embed_time(t)[None,None,None,:,None]
         x_out = self.inference(x.reshape(B*T*N,D,4))
         return x_out.reshape(B,T,N,D,4)
