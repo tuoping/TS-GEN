@@ -76,21 +76,10 @@ def parse_train_args():
     
     ## Model settings
     group = parser.add_argument_group("Model settings")
-    group.add_argument('--hyena', action='store_true')
-    group.add_argument('--no_rope', action='store_true')
     group.add_argument('--dropout', type=float, default=0.0)
     group.add_argument('--scale_factor', type=float, default=1.0)
-    group.add_argument('--interleave_ipa', action='store_true')
-    group.add_argument('--prepend_ipa', action='store_true')
-    group.add_argument('--oracle', action='store_true')
     group.add_argument('--num_layers', type=int, default=5)
     group.add_argument('--embed_dim', type=int, default=384)
-    group.add_argument('--mha_heads', type=int, default=16)
-    group.add_argument('--ipa_heads', type=int, default=4)
-    # group.add_argument('--ipa_layers', type=int, default=None)
-    group.add_argument('--ipa_head_dim', type=int, default=32)
-    group.add_argument('--ipa_qk', type=int, default=8)
-    group.add_argument('--ipa_v', type=int, default=8)
 
     group.add_argument('--time_multiplier', type=float, default=100.)
     group.add_argument('--abs_pos_emb', action='store_true')
