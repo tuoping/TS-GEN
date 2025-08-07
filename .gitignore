@@ -8,3 +8,4 @@ slurm-*
 *.xyz
 misc_notebooks/check*
 experiments
+*_cache
