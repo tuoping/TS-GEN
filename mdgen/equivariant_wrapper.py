@@ -174,6 +174,7 @@ class EquivariantMDGenWrapper(Wrapper):
             else:
                 # conditional_batch = torch.rand(1)[0] >= 0.7
                 conditional_batch = True
+                
         elif self.args.tps_condition:
             cond_mask_f = torch.zeros(B, T, L, dtype=int, device=species.device)
             cond_mask_r = torch.zeros(B, T, L, dtype=int, device=species.device)
@@ -184,8 +185,8 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                # conditional_batch = torch.rand(1)[0] >= 0.7
-                conditional_batch = True
+                conditional_batch = torch.rand(1)[0] >= 0.7
+                # conditional_batch = True
 
         if (self.args.sim_condition and conditional_batch):
             # For sim_condition, the x and x_next are separately feeded.
@@ -206,7 +207,8 @@ class EquivariantMDGenWrapper(Wrapper):
                         'species': batch['species'],
                         'num_atoms': batch['num_atoms']
                     }
-                }
+                },
+                'conditional_batch': conditional_batch
             }
         elif (self.args.tps_condition and conditional_batch):
             # For tps_condition, the x[:::] are feeded together, v_mask is not necessary.
@@ -232,7 +234,8 @@ class EquivariantMDGenWrapper(Wrapper):
                             'mask': cond_mask_r.reshape(-1),
                         }
                     }
-                }
+                },
+                'conditional_batch': conditional_batch
             }
         else:
             return {
@@ -246,7 +249,8 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
-                }
+                },
+                'conditional_batch': conditional_batch
             }
     
     def general_step(self, batch, stage='train'):
@@ -266,6 +270,7 @@ class EquivariantMDGenWrapper(Wrapper):
         )
         self.log('model_dur', time.time() - start)
         self.log('time', out_dict['t'])
+        self.log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
         self.log('loss_gen', loss_gen)
         loss = loss_gen
@@ -339,7 +344,7 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)
+            zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
 
         self.integration_step = 0
         if self.score_model is None:
