@@ -204,6 +204,7 @@ class Transport:
         model_output = model(xt, t, **model_kwargs)
         if self.score_model is not None:
             score_model_output = self.score_model(xt, t, **model_kwargs)
+
             
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)
@@ -215,6 +216,7 @@ class Transport:
         terms = {}
         terms['t'] = t
         terms['pred'] = model_output
+        terms['x0'] = x0
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
                 terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)

@@ -14,8 +14,6 @@ def parse_train_args():
     group = parser.add_argument_group("Epoch settings")
     group.add_argument("--epochs", type=int, default=1000)
     group.add_argument("--overfit", action='store_true')
-    group.add_argument("--overfit_peptide", type=str, default=None)
-    group.add_argument("--overfit_frame", action='store_true')
     group.add_argument("--train_batches", type=int, default=None)
     group.add_argument("--val_batches", type=int, default=None)
     group.add_argument("--val_repeat", type=int, default=25)
@@ -48,49 +46,24 @@ def parse_train_args():
     
     ## Training data 
     group = parser.add_argument_group("Training data settings")
-    group.add_argument('--train_split', type=str, default="splits/4AA_test.csv")
-    group.add_argument('--val_split', type=str, default="splits/4AA_test.csv")
     group.add_argument('--data_dir', type=str, default=None, required=True)
     group.add_argument('--num_frames', type=int, default=1)
-    group.add_argument('--crop', type=int, default=256)
     group.add_argument('--suffix', type=str, default='')
-    group.add_argument('--atlas', action='store_true')
-    group.add_argument('--copy_frames', action='store_true')
-    group.add_argument('--no_pad', action='store_true')
-    group.add_argument('--short_md', action='store_true')
 
     ### Masking settings
     group = parser.add_argument_group("Masking settings")
-    group.add_argument('--design_key_frames', action='store_true')
-    group.add_argument('--no_aa_emb', action='store_true')
-    group.add_argument("--no_torsion", action='store_true')
-    group.add_argument("--no_design_torsion", action='store_true')
-    group.add_argument("--supervise_no_torsions", action='store_true')
-    group.add_argument("--supervise_all_torsions", action='store_true')
+    group.add_argument('--localmask', action='store_true')
 
     ## Ablations settings
     group = parser.add_argument_group("Ablations settings")
-    group.add_argument('--no_offsets', action='store_true')
-    group.add_argument('--no_frames', action='store_true')
     
     
     ## Model settings
     group = parser.add_argument_group("Model settings")
-    group.add_argument('--hyena', action='store_true')
-    group.add_argument('--no_rope', action='store_true')
     group.add_argument('--dropout', type=float, default=0.0)
     group.add_argument('--scale_factor', type=float, default=1.0)
-    group.add_argument('--interleave_ipa', action='store_true')
-    group.add_argument('--prepend_ipa', action='store_true')
-    group.add_argument('--oracle', action='store_true')
     group.add_argument('--num_layers', type=int, default=5)
     group.add_argument('--embed_dim', type=int, default=384)
-    group.add_argument('--mha_heads', type=int, default=16)
-    group.add_argument('--ipa_heads', type=int, default=4)
-    # group.add_argument('--ipa_layers', type=int, default=None)
-    group.add_argument('--ipa_head_dim', type=int, default=32)
-    group.add_argument('--ipa_qk', type=int, default=8)
-    group.add_argument('--ipa_v', type=int, default=8)
 
     group.add_argument('--time_multiplier', type=float, default=100.)
     group.add_argument('--abs_pos_emb', action='store_true')
@@ -111,13 +84,9 @@ def parse_train_args():
     ## video settings
     group = parser.add_argument_group("Video settings")
     group.add_argument('--tps_condition', action='store_true')
-    group.add_argument('--fed_condition', action='store_true')
     group.add_argument('--design', action='store_true')
     group.add_argument('--design_from_traj', action='store_true')
     group.add_argument('--sim_condition', action='store_true')
-    group.add_argument('--inpainting', action='store_true')
-    group.add_argument('--dynamic_mpnn', action='store_true')
-    group.add_argument('--mpnn', action='store_true')
     group.add_argument('--frame_interval', type=int, default=1)
     group.add_argument('--cond_interval', type=int, default=None) # for superresolution
     
@@ -127,10 +96,9 @@ def parse_train_args():
     group.add_argument('--num_convs', type=int, default=5)
     group.add_argument('--num_heads', type=int, default=4)
     group.add_argument('--ff_dim', type=int, default=64)
-    group.add_argument('--cutoff', type=float, default=2.5)
+    group.add_argument('--cutoff', type=float, default=12)
     
     ## nonequil. simulation settings
-    group.add_argument('--localmask', action='store_true')
     group.add_argument('--potential_model', action='store_true')
     group.add_argument("--pbc", action='store_true')
     group.add_argument("--guided", action='store_true')
