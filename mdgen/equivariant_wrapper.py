@@ -172,8 +172,8 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                # conditional_batch = torch.rand(1)[0] >= 0.7
-                conditional_batch = True
+                conditional_batch = torch.rand(1)[0] >= 0.7
+                # conditional_batch = True
         elif self.args.tps_condition:
             cond_mask_f = torch.zeros(B, T, L, dtype=int, device=species.device)
             cond_mask_r = torch.zeros(B, T, L, dtype=int, device=species.device)
@@ -184,8 +184,8 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                # conditional_batch = torch.rand(1)[0] >= 0.7
-                conditional_batch = True
+                conditional_batch = torch.rand(1)[0] >= 0.7
+                # conditional_batch = True
 
         if (self.args.sim_condition and conditional_batch):
             # For sim_condition, the x and x_next are separately feeded.
