@@ -142,7 +142,7 @@ class Transport:
             x1 - data point; [batch, *dim]
         """
 
-        x0 = th.randn_like(x1)
+        x0 = th.randn_like(x1)*self.args.x0std
         t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
         t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
         t = t.to(x1)
@@ -201,9 +201,10 @@ class Transport:
         
         B = x1.shape[0]
         assert t.shape == (B,)
-        model_output = model(xt , t, **model_kwargs)
+        model_output = model(xt, t, **model_kwargs)
         if self.score_model is not None:
-            score_model_output = self.score_model(xt , t, **model_kwargs)
+            score_model_output = self.score_model(xt, t, **model_kwargs)
+
             
         B, *_, C = xt.shape
         assert model_output.size() == (B, *xt.size()[1:-1], C)

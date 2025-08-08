@@ -174,6 +174,7 @@ class EquivariantMDGenWrapper(Wrapper):
             else:
                 conditional_batch = torch.rand(1)[0] >= 0.7
                 # conditional_batch = True
+
         elif self.args.tps_condition:
             cond_mask_f = torch.zeros(B, T, L, dtype=int, device=species.device)
             cond_mask_r = torch.zeros(B, T, L, dtype=int, device=species.device)
@@ -343,7 +344,7 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)
+            zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
 
         self.integration_step = 0
         if self.score_model is None:
