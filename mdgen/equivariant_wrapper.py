@@ -206,7 +206,8 @@ class EquivariantMDGenWrapper(Wrapper):
                         'species': batch['species'],
                         'num_atoms': batch['num_atoms']
                     }
-                }
+                },
+                'conditional_batch': conditional_batch
             }
         elif (self.args.tps_condition and conditional_batch):
             # For tps_condition, the x[:::] are feeded together, v_mask is not necessary.
@@ -232,7 +233,8 @@ class EquivariantMDGenWrapper(Wrapper):
                             'mask': cond_mask_r.reshape(-1),
                         }
                     }
-                }
+                },
+                'conditional_batch': conditional_batch
             }
         else:
             return {
@@ -246,7 +248,8 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": None
-                }
+                },
+                'conditional_batch': conditional_batch
             }
     
     def general_step(self, batch, stage='train'):
@@ -266,6 +269,7 @@ class EquivariantMDGenWrapper(Wrapper):
         )
         self.log('model_dur', time.time() - start)
         self.log('time', out_dict['t'])
+        self.log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
         self.log('loss_gen', loss_gen)
         loss = loss_gen
