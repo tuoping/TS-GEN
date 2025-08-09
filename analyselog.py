@@ -87,7 +87,7 @@ def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_e
     print("negative alltrainsteps_dir_b1024 = ", alltrainsteps_dir_b1024[after_idx:before_idx][negative_idx])
     print("negative alltrainlosses_dir_b1024 = ", alltrainlosses_dir_b1024[after_idx:before_idx][negative_idx])
     print("negative allconditional_bool = ", allconditional_bool[negative_idx])
-    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx], c=np.array(allconditional_bool)[negative_idx], label="$L<0$", marker="o", vmin=0, vmax=1)
+    plt.scatter(np.array(alltrainsteps_dir_b1024[after_idx:before_idx])[negative_idx], -np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx], c=np.array(allconditional_bool)[negative_idx], label="$L<0$", marker="o", vmin=0, vmax=1, s=10)
     cbar = plt.colorbar()
     cbar.set_label("Ratio of conditional training per batch", fontsize=font['size']-4)
     if len(positive_idx) > 0:

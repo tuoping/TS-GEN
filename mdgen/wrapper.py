@@ -46,7 +46,7 @@ class Wrapper(pl.LightningModule):
         self.last_log_time = time.time()
         self.iter_step = 0
 
-    def log(self, key, data):
+    def prefix_log(self, key, data):
         if isinstance(data, torch.Tensor):
             data = data.mean().item()
         log = self._log
@@ -100,6 +100,11 @@ class Wrapper(pl.LightningModule):
     def on_validation_epoch_end(self):
         if self.args.ema:
             self.restore_cached_weights()
+        log = self._log
+        log = {key: log[key] for key in log if "val_" in key}
+        log = gather_log(log, self.trainer.world_size)
+        mean_log = get_log_mean(log)
+        self.log("val_loss", mean_log['val_loss'])
         self.print_log(prefix='val', save=False)
 
     def on_before_optimizer_step(self, optimizer):

@@ -776,3 +776,47 @@ class EquivariantTransformerDataset_Transition1x(torch.utils.data.Dataset):
 
             }
     
+from torch.utils.data import Sampler
+import random
+import math
+from collections import defaultdict
+
+class BucketBatchSampler(Sampler):
+    def __init__(self, dataset, batch_size, drop_last=False, shuffle=True):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.drop_last = drop_last
+        self.shuffle = shuffle
+        self.batched_indices = self._create_batches()
+
+    def _create_batches(self):
+        # Group indices by num_atoms
+        buckets = defaultdict(list)
+        for idx in range(len(self.dataset)):
+            sample = self.dataset[idx]
+            num_atoms = int(max(sample["num_atoms"]))
+            buckets[num_atoms].append(idx)
+
+        # Create batches
+        all_batches = []
+        for bucket in buckets.values():
+            if self.shuffle:
+                random.shuffle(bucket)
+            for i in range(0, len(bucket), self.batch_size):
+                batch = bucket[i:i + self.batch_size]
+                if len(batch) == self.batch_size or not self.drop_last:
+                    all_batches.append(batch)
+
+        if self.shuffle:
+            random.shuffle(all_batches)
+
+        return all_batches
+
+    def __iter__(self):
+        if self.shuffle:
+            self.batched_indices = self._create_batches()
+        return iter(self.batched_indices)
+
+    def __len__(self):
+        return len(self.batched_indices)
+

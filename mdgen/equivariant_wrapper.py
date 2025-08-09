@@ -172,7 +172,7 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                conditional_batch = torch.rand(1)[0] >= 0.7
+                conditional_batch = torch.rand(1)[0] >= 1-self.args.ratio_conditonal
                 # conditional_batch = True
 
         elif self.args.tps_condition:
@@ -185,7 +185,7 @@ class EquivariantMDGenWrapper(Wrapper):
             if self.stage == "inference":
                 conditional_batch = True
             else:
-                conditional_batch = torch.rand(1)[0] >= 0.7
+                conditional_batch = torch.rand(1)[0] >= 1-self.args.ratio_conditonal
                 # conditional_batch = True
 
         if (self.args.sim_condition and conditional_batch):
@@ -268,15 +268,15 @@ class EquivariantMDGenWrapper(Wrapper):
             mask=prep['loss_mask'],
             model_kwargs=prep['model_kwargs']
         )
-        self.log('model_dur', time.time() - start)
-        self.log('time', out_dict['t'])
-        self.log('conditional_batch', prep['conditional_batch'].to(torch.float32))
+        self.prefix_log('model_dur', time.time() - start)
+        self.prefix_log('time', out_dict['t'])
+        self.prefix_log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
-        self.log('loss_gen', loss_gen)
+        self.prefix_log('loss_gen', loss_gen)
         loss = loss_gen
         if self.score_model is not None:
-            self.log("loss_flow", out_dict['loss_flow'])
-            self.log("loss_score", out_dict['loss_score'])
+            self.prefix_log("loss_flow", out_dict['loss_flow'])
+            self.prefix_log("loss_score", out_dict['loss_score'])
 
         if self.args.potential_model:
             B,T,L,_ = prep["latents"].shape
@@ -285,15 +285,15 @@ class EquivariantMDGenWrapper(Wrapper):
             energy = energy.sum(dim=2).squeeze(-1)
             # forces = -torch.autograd.grad(energy, prep['latents'])[0]
             loss_energy = (((energy -prep["E"])**2)*prep['loss_mask_potential_model']).sum(-1)
-            self.log('loss_energy', loss_energy)        
+            self.prefix_log('loss_energy', loss_energy)        
             loss += loss_energy
-        self.log('model_dur', time.time() - start)
-        self.log('loss', loss)
+        self.prefix_log('model_dur', time.time() - start)
+        self.prefix_log('loss', loss)
 
-        self.log('dur', time.time() - self.last_log_time)
+        self.prefix_log('dur', time.time() - self.last_log_time)
         if 'name' in batch:
-            self.log('name', ','.join(batch['name']))
-        self.log('general_step_dur', time.time() - start1)
+            self.prefix_log('name', ','.join(batch['name']))
+        self.prefix_log('general_step_dur', time.time() - start1)
         self.last_log_time = time.time()
         
         return loss.mean()

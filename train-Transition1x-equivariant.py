@@ -4,7 +4,7 @@ from mdgen.logger import get_logger
 logger = get_logger(__name__)
 
 import torch, os
-from mdgen.dataset import EquivariantTransformerDataset_Transition1x
+from mdgen.dataset import BucketBatchSampler
 from mdgen.equivariant_wrapper import EquivariantMDGenWrapper
 from pytorch_lightning.callbacks import ModelCheckpoint, ModelSummary
 import pytorch_lightning as pl
@@ -26,23 +26,25 @@ class ResetLrCallback(pl.Callback):
 
 torch.set_float32_matmul_precision('medium')
 
-trainset = EquivariantTransformerDataset_Transition1x(data_dirname=args.data_dir, sim_condition=args.sim_condition, stage="train")
+train_dataset = torch.load(os.path.join(args.data_dir, "tps_masked_train.pt"), weights_only=False)
+trainsampler = BucketBatchSampler(train_dataset, batch_size=args.batch_size)
 
 if args.overfit:
-    valset = trainset    
+    val_dataset = train_dataset
+    valsampler = trainsampler
 else:
-    valset = EquivariantTransformerDataset_Transition1x(data_dirname=args.data_dir, sim_condition=args.sim_condition, stage="val")
+    val_dataset = torch.load(os.path.join(args.data_dir, "tps_masked_val.pt"), weights_only=False)
+    valsampler = BucketBatchSampler(val_dataset, batch_size=args.batch_size)
 
 train_loader = torch.utils.data.DataLoader(
-    trainset,
-    batch_size=args.batch_size,
+    train_dataset,
+    batch_sampler=trainsampler, 
     num_workers=args.num_workers,
-    shuffle=True,
 )
 
 val_loader = torch.utils.data.DataLoader(
-    valset,
-    batch_size=args.batch_size,
+    val_dataset,
+    batch_sampler=valsampler,
     num_workers=args.num_workers,
 )
 
