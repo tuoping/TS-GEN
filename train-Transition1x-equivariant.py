@@ -72,6 +72,13 @@ trainer = pl.Trainer(
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=1,
+            monitor="val_loss_gen",
+            every_n_epochs=args.ckpt_freq,
+        ),
+        ModelCheckpoint(
+            dirpath=os.environ["MODEL_DIR"], 
+            save_top_k=1,
+            monitor="val_loss_var",
             every_n_epochs=args.ckpt_freq,
         ),
         ModelSummary(max_depth=2),

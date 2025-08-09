@@ -49,11 +49,11 @@ def readlog(dir, trainlosskeyword="\'train_loss\'", exclude_epochs=exclude_epoch
     return alltrainlosses_baseline, alltrainsteps_baseline, allconditional_bool
 
 
-def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_epoch=None, ymin=None):
+def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_epoch=None, ymin=None, ymax=None):
     plt.rcParams["figure.figsize"] = (6,5)
     fig = plt.figure()
     alltrainlosses_dir_b1024, alltrainsteps_dir_b1024, allconditional_bool = readlog(dir_dir_b1024, trainlosskeyword=key)
-    np.save(key, np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
+    # np.save(key, np.vstack([alltrainsteps_dir_b1024, alltrainlosses_dir_b1024]))
     before_idx = None
     after_idx = None
     if len(alltrainlosses_dir_b1024) != 0:
@@ -95,7 +95,7 @@ def plot_1losses(dir_dir_b1024, key="\'train_loss\'", after_epoch=None, before_e
     if len(negative_idx) > 0:
         plt.axhline(-np.array(alltrainlosses_dir_b1024[after_idx:before_idx])[negative_idx][-1], ls="--", c="r")
     plt.semilogy()
-    setfigform_simple("epoch","loss", ylimit=(ymin, None))
+    setfigform_simple("epoch","loss", ylimit=(ymin, ymax))
     plt.legend()
     plt.title(dir_dir_b1024, fontdict=font)
     
@@ -110,9 +110,12 @@ parser = argparse.ArgumentParser(description="DCD → Extended XYZ with triclini
 parser.add_argument("--after_epoch", type=int, default=0, )
 parser.add_argument("--before_epoch",  type=int, default=None)
 parser.add_argument("--ymin_val",  type=float, default=None)
+parser.add_argument("--ymax_val",  type=float, default=None)
 parser.add_argument("--ymin_train",  type=float, default=None)
+parser.add_argument("--ymax_train",  type=float, default=None)
+parser.add_argument("--key",  type=str, default="\'val_loss_gen\'")
 args = parser.parse_args()
 
 dir = f"./"
-plot_1losses(dir, key="\'train_loss_gen\'", after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_train)
-plot_1losses(dir, key="\'val_loss_gen\'", after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_val)
+plot_1losses(dir, key="\'train_loss\'", after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_train)
+plot_1losses(dir, key=args.key, after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_val, ymax=args.ymax_val)

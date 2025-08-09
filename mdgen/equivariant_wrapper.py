@@ -10,7 +10,7 @@ import numpy as np
 from functools import partial
 
 from .model.equivariant_latent_model import EquivariantTransformer_dpm, Encoder_dpm, Processor, Decoder
-from .wrapper import Wrapper
+from .wrapper import Wrapper, gather_log, get_log_mean
 
 # Typing
 from torch import Tensor
@@ -103,6 +103,18 @@ class EquivariantMDGenWrapper(Wrapper):
                 model=self.model, decay=args.ema_decay
             )
             self.cached_weights = None
+
+    def on_validation_epoch_end(self):
+        if self.args.ema:
+            self.restore_cached_weights()
+        log = self._log
+        log = {key: log[key] for key in log if "val_" in key}
+        log = gather_log(log, self.trainer.world_size)
+        mean_log = get_log_mean(log)
+        self.log("val_loss", mean_log['val_loss'])
+        self.log("val_loss_var", mean_log['val_loss_var'])
+        self.log("val_loss_gen", mean_log['val_loss_gen'])
+        self.print_log(prefix='val', save=False)
 
     def prep_batch(self, batch):
         if self.args.design:
