@@ -112,6 +112,9 @@ class Decoder(nn.Module):
     def forward(self, h:Tensor, v: Tensor) -> Tensor:
         h_ = h @ self.Oh
         v_out = torch.einsum('ndi, df -> nfi', v, self.Ov)
+        # print('Decoder--> h=', h_)
+        # print('Decoder--> v=', v_out)
+        # raise RuntimeError
         # return h_out, v_out.squeeze()
         if h_.shape[-1] >= self.num_species:
             h_out_1 = h_[...,:-self.num_species]
@@ -218,12 +221,16 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         if self.abs_time_emb:
             h = h + self.time_embed[:, :, None]
         if self.tps_condition and out_cond is not None:
-            cond_f = out_cond["cond_f"]
-            cond_r = out_cond["cond_r"]
-            h = h + self.cond_to_emb_f(cond_f['x']) + self.mask_to_emb_f(cond_f["mask"])
-            h = h + self.cond_to_emb_r(cond_r['x']) + self.mask_to_emb_r(cond_r["mask"])
-            v = v + self.v_cond_to_emb_f(cond_f['x']) + self.v_mask_to_emb_f(cond_f["mask"])
-            v = v + self.v_cond_to_emb_r(cond_r['x']) + self.v_mask_to_emb_r(cond_r["mask"])
+            B,T,L,_ = out_cond["cond_f"]['x'].shape
+            assert _ == 3
+            cond_f_x = out_cond["cond_f"]['x'][:,0,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3)
+            cond_r_x = out_cond["cond_r"]['x'][:,-1,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3)
+            cond_f_mask = out_cond["cond_f"]['mask'][:,0,...].unsqueeze(1).expand(B,T,L).reshape(-1)
+            cond_r_mask = out_cond["cond_r"]['mask'][:,-1,...].unsqueeze(1).expand(B,T,L).reshape(-1)
+            h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
+            h = h + self.cond_to_emb_r(cond_r_x) + self.mask_to_emb_r(cond_r_mask)
+            v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
+            v = v + self.v_cond_to_emb_r(cond_r_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
         else:
             if out_cond is not None:
                 if self.pbc:
@@ -246,6 +253,12 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
 
 
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
+        # print('processor--> h=', )
+        # for i in range(h.shape[0]):
+        #     print(h[i,:10])
+        # print('processor--> v=', )
+        # for i in range(v.shape[0]):
+        #     print(v[i,:10])
         return self.decoder(h, v)
 
     
