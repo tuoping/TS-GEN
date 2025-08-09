@@ -57,17 +57,8 @@ model = EquivariantMDGenWrapper(args)
 # model = EquivariantMDGenWrapper(**checkpoint["hyper_parameters"])
 # model.load_state_dict(checkpoint["state_dict"], strict=False)
 
-trainer = pl.Trainer(
-    accelerator="gpu" if torch.cuda.is_available() else 'auto',
-    max_epochs=args.epochs,
-    limit_train_batches=args.train_batches or 1.0,
-    limit_val_batches=0.0 if args.no_validate else (args.val_batches or 1.0),
-    num_sanity_val_steps=0,
-    precision=args.precision,
-    enable_progress_bar=not args.wandb or os.getlogin() == 'hstark',
-    gradient_clip_val=args.grad_clip,
-    default_root_dir=os.environ["MODEL_DIR"], 
-    callbacks=[
+if args.weight_loss_var_x0 > 0:
+    callbacks_fn = [
         ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
@@ -88,7 +79,36 @@ trainer = pl.Trainer(
         ),
         ModelSummary(max_depth=2),
         
-    ],
+    ]
+else:
+    callbacks_fn = [
+        ResetLrCallback(args.lr),
+        ModelCheckpoint(
+            dirpath=os.environ["MODEL_DIR"], 
+            save_top_k=1,
+            monitor="val_loss_gen",
+            every_n_epochs=args.ckpt_freq,
+        ),
+        ModelCheckpoint(
+            dirpath=os.environ["MODEL_DIR"], 
+            save_top_k=1,
+            every_n_epochs=args.ckpt_freq,
+        ),
+        ModelSummary(max_depth=2),
+        
+    ]
+
+trainer = pl.Trainer(
+    accelerator="gpu" if torch.cuda.is_available() else 'auto',
+    max_epochs=args.epochs,
+    limit_train_batches=args.train_batches or 1.0,
+    limit_val_batches=0.0 if args.no_validate else (args.val_batches or 1.0),
+    num_sanity_val_steps=0,
+    precision=args.precision,
+    enable_progress_bar=not args.wandb or os.getlogin() == 'hstark',
+    gradient_clip_val=args.grad_clip,
+    default_root_dir=os.environ["MODEL_DIR"], 
+    callbacks=callbacks_fn,
     accumulate_grad_batches=args.accumulate_grad,
     val_check_interval=args.val_freq,
     check_val_every_n_epoch=args.val_epoch_freq,

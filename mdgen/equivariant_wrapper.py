@@ -112,7 +112,8 @@ class EquivariantMDGenWrapper(Wrapper):
         log = gather_log(log, self.trainer.world_size)
         mean_log = get_log_mean(log)
         self.log("val_loss", mean_log['val_loss'])
-        self.log("val_loss_var", mean_log['val_loss_var'])
+        if self.args.weight_loss_var_x0 > 0:
+            self.log("val_loss_var", mean_log['val_loss_var'])
         self.log("val_loss_gen", mean_log['val_loss_gen'])
         self.print_log(prefix='val', save=False)
 
@@ -285,7 +286,8 @@ class EquivariantMDGenWrapper(Wrapper):
         self.prefix_log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
         self.prefix_log('loss_gen', loss_gen)
-        self.prefix_log('loss_var', out_dict['loss_var'])
+        if self.args.weight_loss_var_x0 > 0:
+            self.prefix_log('loss_var', out_dict['loss_var'])
         loss = loss_gen
         if self.score_model is not None:
             self.prefix_log("loss_flow", out_dict['loss_flow'])

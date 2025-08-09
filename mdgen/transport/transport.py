@@ -185,11 +185,12 @@ class Transport:
         else:
             if self.score_model is None:
                 t, xt, ut = self.path_sampler.plan(t, x0[0], x1)
-                xt_samples = []
-                for x0_2 in x0[1:]:
-                    t_2, xt_2, ut_2 = self.path_sampler.plan(t, x0_2, x1)
-                    assert torch.all(t == t_2)
-                    xt_samples.append(xt_2)
+                if self.args.weight_loss_var_x0 > 0:
+                    xt_samples = []
+                    for x0_2 in x0[1:]:
+                        t_2, xt_2, ut_2 = self.path_sampler.plan(t, x0_2, x1)
+                        assert torch.all(t == t_2)
+                        xt_samples.append(xt_2)
             else:
                 t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
 
@@ -208,10 +209,11 @@ class Transport:
         B = x1.shape[0]
         assert t.shape == (B,)
         model_output = model(xt, t, **model_kwargs)
-        model_output_samples = [model_output]
-        for xt_2 in xt_samples:
-            model_output_2 = model(xt_2, t, **model_kwargs)
-            model_output_samples.append(model_output_2)
+        if self.args.weight_loss_var_x0 > 0:
+            model_output_samples = [model_output]
+            for xt_2 in xt_samples:
+                model_output_2 = model(xt_2, t, **model_kwargs)
+                model_output_samples.append(model_output_2)
         if self.score_model is not None:
             score_model_output = self.score_model(xt, t, **model_kwargs)
 
@@ -230,24 +232,23 @@ class Transport:
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
                 terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output))
-                ## model_output_samples: list of tensors, each [B, ...] same shape
-                stacked = torch.stack(model_output_samples, dim=0)  # [K, B, ...]
-                '''
-                ## cosine similarity with the mean
-                eps = 1e-8
-                stacked_n = stacked / (stacked.norm(dim=-1, keepdim=True) + eps)
-                model_output_mean = stacked_n.mean(0, keepdim=True).detach()
-                model_output_mean = model_output_mean / (model_output_mean.norm(dim=-1, keepdim=True) + eps)
-                cos = th.nn.functional.cosine_similarity(stacked_n, model_output_mean, dim=-1)
-                terms['loss_var'] = (1-cos).mean(dim = 0)
-                '''
-                ## pair-wise cosine similarity
-                K = stacked.shape[0]
-                idx_i, idx_j = torch.triu_indices(K, K, offset=1)
-                stacked_i = stacked[idx_i]
-                stacked_j = stacked[idx_j]
-                pair_cos = torch.nn.functional.cosine_similarity(stacked_i, stacked_j, dim=-1)  
-                terms['loss_var'] = (1-pair_cos).mean(dim = 0)
+                if self.args.weight_loss_var_x0 > 0:
+                    ## model_output_samples: list of tensors, each [B, ...] same shape
+                    stacked = torch.stack(model_output_samples, dim=0)  # [K, B, ...]
+                    '''
+                    eps = 1e-8
+                    stacked_n = stacked / (stacked.norm(dim=-1, keepdim=True) + eps)
+                    model_output_mean = stacked_n.mean(0, keepdim=True).detach()
+                    model_output_mean = model_output_mean / (model_output_mean.norm(dim=-1, keepdim=True) + eps)
+                    cos = th.nn.functional.cosine_similarity(stacked_n, model_output_mean, dim=-1)
+                    terms['loss_var'] = (1-cos).mean(dim = 0)
+                    '''
+                    K = stacked.shape[0]
+                    idx_i, idx_j = torch.triu_indices(K, K, offset=1)
+                    stacked_i = stacked[idx_i]
+                    stacked_j = stacked[idx_j]
+                    pair_cos = torch.nn.functional.cosine_similarity(stacked_i, stacked_j, dim=-1)  
+                    terms['loss_var'] = (1-pair_cos).mean(dim = 0)
 
                 # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
                 # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
@@ -258,7 +259,10 @@ class Transport:
                     terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
                     terms['loss'] = terms['loss_flow']+terms['loss_score']
                 else:
-                    terms['loss'] = terms['loss_flow'] + mean_flat(terms['loss_var'], mask[...,0])*self.args.weight_loss_var_x0
+                    if self.args.weight_loss_var_x0 > 0:
+                        terms['loss'] = terms['loss_flow'] + mean_flat(terms['loss_var'], mask[...,0])*self.args.weight_loss_var_x0
+                    else:
+                        terms['loss'] = terms['loss_flow']
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
