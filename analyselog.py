@@ -117,5 +117,5 @@ parser.add_argument("--key",  type=str, default="\'val_loss_gen\'")
 args = parser.parse_args()
 
 dir = f"./"
-plot_1losses(dir, key="\'train_loss\'", after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_train)
+plot_1losses(dir, key="\'train_loss\'", after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_train, ymax=args.ymax_train)
 plot_1losses(dir, key=args.key, after_epoch=args.after_epoch, before_epoch=args.before_epoch, ymin=args.ymin_val, ymax=args.ymax_val)

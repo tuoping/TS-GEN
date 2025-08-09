@@ -141,13 +141,13 @@ class Transport:
           Args:
             x1 - data point; [batch, *dim]
         """
-
-        x0 = th.randn_like(x1)*self.args.x0std
-        x0_2 = th.randn_like(x1)*self.args.x0std
+        x0 = []
+        for i in range(5):
+            x0.append(th.randn_like(x1)*self.args.x0std)
         t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
         t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
         t = t.to(x1)
-        return t, x0, x1, x0_2
+        return t, x0, x1
 
     def training_losses(
             self,
@@ -169,7 +169,7 @@ class Transport:
             model_kwargs = {}
         
         ### normal sampler of t
-        t, x0, x1, x0_2 = self.sample(x1)
+        t, x0, x1 = self.sample(x1)
         if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
             assert self.model_type == ModelType.VELOCITY
             seq_one_hot = aatype1
@@ -184,9 +184,12 @@ class Transport:
             # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
         else:
             if self.score_model is None:
-                t, xt, ut = self.path_sampler.plan(t, x0, x1)
-                t_2, xt_2, ut_2 = self.path_sampler.plan(t, x0_2, x1)
-                assert torch.all(t == t_2)
+                t, xt, ut = self.path_sampler.plan(t, x0[0], x1)
+                xt_samples = []
+                for x0_2 in x0[1:]:
+                    t_2, xt_2, ut_2 = self.path_sampler.plan(t, x0_2, x1)
+                    assert torch.all(t == t_2)
+                    xt_samples.append(xt_2)
             else:
                 t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
 
@@ -205,7 +208,13 @@ class Transport:
         B = x1.shape[0]
         assert t.shape == (B,)
         model_output = model(xt, t, **model_kwargs)
-        model_output_2 = model(xt_2, t, **model_kwargs)
+        model_output_samples = [model_output]
+        model_output_mean = model_output.clone()
+        for xt_2 in xt_samples:
+            model_output_2 = model(xt_2, t, **model_kwargs)
+            model_output_samples.append(model_output_2)
+            model_output_mean += model_output_2
+        model_output_mean /= len(xt_samples)
         if self.score_model is not None:
             score_model_output = self.score_model(xt, t, **model_kwargs)
 
@@ -224,7 +233,10 @@ class Transport:
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
                 terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output))
-                terms['loss_var']=((model_output - model_output_2)**2)
+                terms['loss_var']=torch.zeros_like(model_output, device = xt.device)
+                for model_output_2 in model_output_samples:
+                    terms['loss_var'] += (model_output_2 - model_output_mean)**2
+                terms['loss_var'] /= len(model_output_samples)
                 # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
                 # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
                 # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
