@@ -233,10 +233,15 @@ class Transport:
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
                 terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output))
-                terms['loss_var']=torch.zeros_like(model_output, device = xt.device)
-                for model_output_2 in model_output_samples:
-                    terms['loss_var'] += (model_output_2 - model_output_mean)**2
-                terms['loss_var'] /= len(model_output_samples)
+                # terms['loss_var']=torch.zeros_like(model_output, device = xt.device)
+                # for model_output_2 in model_output_samples:
+                #     terms['loss_var'] += (model_output_2 - model_output_mean)**2
+                # terms['loss_var'] /= len(model_output_samples)
+                ## model_output_samples: list of tensors, each [B, ...] same shape
+                stacked = torch.stack(model_output_samples, dim=0)  # [K, B, ...]
+                ## model_output_mean: [B, ...]
+                terms['loss_var'] = ((stacked - model_output_mean)**2).mean(dim=0)  # [B, ...]
+                
                 # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
                 # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
                 # terms["loss_fisherreg"] = mean_flat((div_v + (model_output*s_est).sum(dim=-1).unsqueeze(-1))**2, mask)
