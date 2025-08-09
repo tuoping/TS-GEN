@@ -273,6 +273,7 @@ class EquivariantMDGenWrapper(Wrapper):
         self.prefix_log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
         self.prefix_log('loss_gen', loss_gen)
+        self.prefix_log('loss_var', out_dict['loss_var'])
         loss = loss_gen
         if self.score_model is not None:
             self.prefix_log("loss_flow", out_dict['loss_flow'])
