@@ -561,6 +561,20 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
             return vector_out*v_mask
     
+    def rearrange_batch(self, idx, model_kwargs:dict):
+        B = idx.shape[0]
+        assert B == model_kwargs['x1'].shape[0]
+        for k in model_kwargs.keys():
+            if 'conditions' not in k:
+                model_kwargs[k] = model_kwargs[k][idx]
+            else:
+                if self.tps_condition:
+                    model_kwargs['conditions']['cond_f']['x'] = model_kwargs['conditions']['cond_f']['x'].reshape(B,-1,3)[idx].reshape(-1,3)
+                    model_kwargs['conditions']['cond_f']['mask'] = model_kwargs['conditions']['cond_f']['mask'].reshape(B,-1)[idx].reshape(-1)
+                    model_kwargs['conditions']['cond_r']['x'] = model_kwargs['conditions']['cond_r']['x'].reshape(B,-1,3)[idx].reshape(-1,3)
+                    model_kwargs['conditions']['cond_r']['mask'] = model_kwargs['conditions']['cond_r']['mask'].reshape(B,-1)[idx].reshape(-1)
+                else:
+                    raise Exception("The required condition not implemented")
 
 class TransformerDecoder(nn.Module):
     def __init__(self, dim: int, num_scalar_out: int, num_vector_out: int, 

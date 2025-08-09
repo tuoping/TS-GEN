@@ -68,6 +68,28 @@ def divergence(v_func, x, t, model_kwarg):
         div += torch.autograd.grad(v[..., i].sum(), x, create_graph=True)[0][..., i]
     return div 
 
+def batch_ot_match(x0, x1, epsilon=0.05, iters=100):
+    """
+    Return a permutation/index map that matches x0 -> x1 using entropic OT (Sinkhorn).
+    For speed, keep it batch-local and do NOT backprop through the solver.
+    """
+    with torch.no_grad():
+        # cost matrix (squared Euclidean)
+        C = torch.cdist(x0, x1, p=2.0)**2                      # [B, B]
+        # Sinkhorn in log domain (very small, stable implementation)
+        log_K = -C / epsilon
+        u = torch.zeros_like(log_K[:, 0])
+        v = torch.zeros_like(log_K[0, :])
+
+        for _ in range(iters):
+            u = -torch.logsumexp(log_K + v[None, :], dim=1)    # row scaling
+            v = -torch.logsumexp(log_K + u[:, None], dim=0)    # col scaling
+
+        log_P = log_K + u[:, None] + v[None, :]
+        P = torch.exp(log_P)                                   # transport plan
+        # Convert soft plan to hard matching (argmax over columns)
+        idx = P.argmax(dim=1)                                  # [B]
+    return idx
 
 class Transport:
 
@@ -170,6 +192,12 @@ class Transport:
         
         ### normal sampler of t
         t, x0, x1 = self.sample(x1)
+        if self.args.dynOT:
+            assert self.args.x0std > 0 and self.args.weight_loss_var_x0 == 0
+            B,T,L,_ = x1.shape
+            idx = batch_ot_match(x0[0].reshape(B, -1), x1.reshape(B, -1)) 
+            x1 = x1[idx]
+            model.rearrange_batch(idx, model_kwargs)
         if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
             assert self.model_type == ModelType.VELOCITY
             seq_one_hot = aatype1
