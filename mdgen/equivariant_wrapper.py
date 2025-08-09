@@ -239,12 +239,12 @@ class EquivariantMDGenWrapper(Wrapper):
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
                         'cond_f':{
-                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0).reshape(B,T,L,3),
-                            'mask': cond_mask_f,
+                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0)[:,0,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
+                            'mask': cond_mask_f[:,0,...].unsqueeze(1).expand(B,T,L).reshape(-1),
                         },
                         'cond_r':{
-                            'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0).reshape(B,T,L,3),
-                            'mask': cond_mask_r,
+                            'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0)[:,-1,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
+                            'mask': cond_mask_r[:,-1,...].unsqueeze(1).expand(B,T,L).reshape(-1),
                         }
                     }
                 },
