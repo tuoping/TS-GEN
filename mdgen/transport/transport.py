@@ -234,7 +234,7 @@ class Transport:
                     terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
                     terms['loss'] = terms['loss_flow']+terms['loss_score']
                 else:
-                    terms['loss'] = terms['loss_flow'] + mean_flat(terms['loss_var'], mask)
+                    terms['loss'] = terms['loss_flow'] + mean_flat(terms['loss_var'], mask)*self.args.weight_loss_var_x0
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))
