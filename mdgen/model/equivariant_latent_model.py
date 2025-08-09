@@ -190,6 +190,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             self.cond_to_emb_r = nn.Linear(cond_dim, embed_dim)
             self.mask_to_emb_f = nn.Embedding(cond_dim, embed_dim)
             self.mask_to_emb_r = nn.Embedding(cond_dim, embed_dim)
+            self.v_cond_to_emb_f = nn.Linear(cond_dim, 3*embed_dim)
+            self.v_cond_to_emb_r = nn.Linear(cond_dim, 3*embed_dim)
+            self.v_mask_to_emb_f = nn.Embedding(cond_dim, 3*embed_dim)
+            self.v_mask_to_emb_r = nn.Embedding(cond_dim, 3*embed_dim)
         else:
             if not pbc:
                 self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
@@ -218,6 +222,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             cond_r = out_cond["cond_r"]
             h = h + self.cond_to_emb_f(cond_f['x']) + self.mask_to_emb_f(cond_f["mask"])
             h = h + self.cond_to_emb_r(cond_r['x']) + self.mask_to_emb_r(cond_r["mask"])
+            v = v + self.v_cond_to_emb_f(cond_f['x']) + self.v_mask_to_emb_f(cond_f["mask"])
+            v = v + self.v_cond_to_emb_r(cond_r['x']) + self.v_mask_to_emb_r(cond_r["mask"])
         else:
             if out_cond is not None:
                 if self.pbc:
@@ -237,6 +243,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                     h = h + self.mask_to_emb(out_cond["mask"].reshape(-1))
                 else:
                     h = h + self.cond_to_emb(out_cond["x"].reshape(-1,3)) + self.mask_to_emb(out_cond["mask"].reshape(-1))
+
 
         h, v = self.processor(h, v, edge_index, edge_attr, edge_len=torch.linalg.norm(edge_vec, dim=1, keepdim=True))
         return self.decoder(h, v)
