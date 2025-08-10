@@ -196,8 +196,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             if pbc:
                 self.v_cond_to_emb_f = nn.Linear(3*cond_dim, 3*embed_dim)
                 self.v_cond_to_emb_r = nn.Linear(3*cond_dim, 3*embed_dim)
-                self.v_mask_to_emb_f = nn.Embedding(3*cond_dim, 3*embed_dim)
-                self.v_mask_to_emb_r = nn.Embedding(3*cond_dim, 3*embed_dim)
+                self.v_mask_to_emb_f = nn.Embedding(cond_dim, embed_dim)
+                self.v_mask_to_emb_r = nn.Embedding(cond_dim, embed_dim)
             else:
                 self.v_cond_to_emb_f = nn.Linear(cond_dim, 3*embed_dim)
                 self.v_cond_to_emb_r = nn.Linear(cond_dim, 3*embed_dim)
@@ -256,8 +256,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 cond_r_mask = out_cond["cond_r"]['mask']
                 h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
                 h = h + self.cond_to_emb_r(cond_r_x) + self.mask_to_emb_r(cond_r_mask)
-                v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
-                v = v + self.v_cond_to_emb_r(cond_r_x).reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
+                v_embc_f = self.v_cond_to_emb_f(cond_f_x.transpose(1,2)).permute(0,2,1)
+                v = v + v_embc_f.reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
+                v_embc_r = self.v_cond_to_emb_r(cond_r_x.transpose(1,2)).permute(0,2,1)
+                v = v + v_embc_r.reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
         else:
             if out_cond is not None:
                 if self.pbc:
