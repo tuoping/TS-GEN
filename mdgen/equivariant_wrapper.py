@@ -320,7 +320,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 pred_pos, _ = self.inference(batch)
                 ref_pos = prep['latents']
                 ## (\Delta d per atom) # B,T,L
-                err = ((((pred_pos - ref_pos).reshape(B, T, L, 3)).norm(dim=-1)))*(prep['loss_mask']!=0)
+                err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
                 ## RMSD per configuration # B,T
                 err = ((err**2).mean(dim=-1)).sqrt()
                 ## mean RMSD per sample # B
