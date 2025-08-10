@@ -250,13 +250,13 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 v_embc_r = self.v_cond_to_emb_r(v_cond_r.transpose(1,2)).permute(0,2,1)
                 v = v + v_embc_r.reshape(-1,self.embed_dim,3) +  self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
             else:
-                cond_f_x = out_cond["cond_f"]['x']
+                # cond_f_x = out_cond["cond_f"]['x']
                 cond_r_x = out_cond["cond_r"]['x']
-                cond_f_mask = out_cond["cond_f"]['mask']
+                # cond_f_mask = out_cond["cond_f"]['mask']
                 cond_r_mask = out_cond["cond_r"]['mask']
-                h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
+                # h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
                 h = h + self.cond_to_emb_r(cond_r_x) + self.mask_to_emb_r(cond_r_mask)
-                v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
+                # v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
                 v = v + self.v_cond_to_emb_r(cond_r_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
         else:
             if out_cond is not None:
@@ -648,8 +648,8 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                 model_kwargs[k] = model_kwargs[k][idx]
             else:
                 if self.tps_condition:
-                    model_kwargs['conditions']['cond_f']['x'] = model_kwargs['conditions']['cond_f']['x'].reshape(B,-1,3)[idx].reshape(-1,3)
-                    model_kwargs['conditions']['cond_f']['mask'] = model_kwargs['conditions']['cond_f']['mask'].reshape(B,-1)[idx].reshape(-1)
+                    # model_kwargs['conditions']['cond_f']['x'] = model_kwargs['conditions']['cond_f']['x'].reshape(B,-1,3)[idx].reshape(-1,3)
+                    # model_kwargs['conditions']['cond_f']['mask'] = model_kwargs['conditions']['cond_f']['mask'].reshape(B,-1)[idx].reshape(-1)
                     model_kwargs['conditions']['cond_r']['x'] = model_kwargs['conditions']['cond_r']['x'].reshape(B,-1,3)[idx].reshape(-1,3)
                     model_kwargs['conditions']['cond_r']['mask'] = model_kwargs['conditions']['cond_r']['mask'].reshape(B,-1)[idx].reshape(-1)
                 else:

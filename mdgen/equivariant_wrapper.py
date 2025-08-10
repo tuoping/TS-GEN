@@ -233,6 +233,7 @@ class EquivariantMDGenWrapper(Wrapper):
             return {
                 "species": species,
                 "latents": latents,
+                'x0': latents[:,0,...].unsqueeze(1).expand(B,T,L,3),
                 'E': batch['e_now'],
                 'loss_mask': batch["TKS_v_mask"]*cond_mask.unsqueeze(-1),
                 'loss_mask_potential_model': (batch["TKS_mask"]!=0).to(int)[:,:,0]*cond_mask[:,:,0],
@@ -243,10 +244,6 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
-                        'cond_f':{
-                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0)[:,0,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
-                            'mask': cond_mask_f[:,0,...].unsqueeze(1).expand(B,T,L).reshape(-1),
-                        },
                         'cond_r':{
                             'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0)[:,-1,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
                             'mask': cond_mask_r[:,-1,...].unsqueeze(1).expand(B,T,L).reshape(-1),
@@ -259,6 +256,7 @@ class EquivariantMDGenWrapper(Wrapper):
             return {
                 "species": species,
                 "latents": latents,
+                'x0': None,
                 'loss_mask': v_loss_mask,
                 'model_kwargs': {
                     "aatype": species,
@@ -282,6 +280,7 @@ class EquivariantMDGenWrapper(Wrapper):
         out_dict = self.transport.training_losses(
             model=self.model,
             x1=prep['latents'],
+            x0=prep['x0'],
             aatype1=batch['species'],
             mask=prep['loss_mask'],
             model_kwargs=prep['model_kwargs']
@@ -375,7 +374,8 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
+            # zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
+            zs = prep['x0']
 
         self.integration_step = 0
         if self.score_model is None:

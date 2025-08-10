@@ -175,6 +175,7 @@ class Transport:
             self,
             model,
             x1,           # target tokens
+            x0=None,
             aatype1=None, # target aatype
             mask=None,
             num_species=5,
@@ -191,7 +192,11 @@ class Transport:
             model_kwargs = {}
         
         ### normal sampler of t
-        t, x0, x1 = self.sample(x1)
+        if x0 is None:
+            t, x0, x1 = self.sample(x1)
+        else:
+            t, _, x1 = self.sample(x1)
+            x0 = [x0]
         if self.args.dynOT:
             assert self.args.x0std > 0 and self.args.weight_loss_var_x0 == 0
             B,T,L,_ = x1.shape
