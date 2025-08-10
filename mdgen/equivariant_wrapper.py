@@ -119,6 +119,7 @@ class EquivariantMDGenWrapper(Wrapper):
         if self.args.weight_loss_var_x0 > 0:
             self.log("val_loss_var", mean_log['val_loss_var'])
         self.log("val_loss_gen", mean_log['val_loss_gen'])
+        self.log("val_meanRMSD", mean_log['val_meanRMSD'])
         self.print_log(prefix='val', save=False)
 
     def prep_batch(self, batch):
