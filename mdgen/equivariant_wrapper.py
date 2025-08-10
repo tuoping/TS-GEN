@@ -323,7 +323,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 err = ((((pred_pos - ref_pos).reshape(B, T, L, 3)).norm(dim=-1)))*(prep['loss_mask']!=0)
                 ## RMSD per configuration # B,T
                 err = ((err**2).mean(dim=-1)).sqrt()
-                ## mean RMSD per batch # B
+                ## mean RMSD per sample # B
                 err = err.mean(dim=-1)
                 self.prefix_log('meanRMSD', err)
         return loss.mean()
