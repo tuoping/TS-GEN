@@ -69,6 +69,12 @@ if args.weight_loss_var_x0 > 0:
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=1,
+            monitor="val_meanRMSD",
+            every_n_epochs=args.ckpt_freq,
+        ),
+        ModelCheckpoint(
+            dirpath=os.environ["MODEL_DIR"], 
+            save_top_k=1,
             monitor="val_loss_var",
             every_n_epochs=args.ckpt_freq,
         ),
@@ -87,6 +93,12 @@ else:
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=1,
             monitor="val_loss_gen",
+            every_n_epochs=args.ckpt_freq,
+        ),
+        ModelCheckpoint(
+            dirpath=os.environ["MODEL_DIR"], 
+            save_top_k=1,
+            monitor="val_meanRMSD",
             every_n_epochs=args.ckpt_freq,
         ),
         ModelCheckpoint(
