@@ -318,7 +318,7 @@ class EquivariantMDGenWrapper(Wrapper):
         if stage == "val":
             B,T,L,_ = prep['latents'].shape
             with torch.no_grad():
-                pred_pos, _ = self.inference(batch)
+                pred_pos, _ = self.inference(batch, stage=stage)
                 ref_pos = prep['latents']
                 ## (\Delta d per atom) # B,T,L
                 err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
