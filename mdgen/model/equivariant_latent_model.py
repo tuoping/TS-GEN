@@ -193,16 +193,18 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
             self.cond_to_emb_r = nn.Linear(cond_dim, embed_dim)
             self.mask_to_emb_f = nn.Embedding(cond_dim, embed_dim)
             self.mask_to_emb_r = nn.Embedding(cond_dim, embed_dim)
-            self.v_cond_to_emb_f = nn.Linear(cond_dim, 3*embed_dim)
-            self.v_cond_to_emb_r = nn.Linear(cond_dim, 3*embed_dim)
-            self.v_mask_to_emb_f = nn.Embedding(cond_dim, 3*embed_dim)
-            self.v_mask_to_emb_r = nn.Embedding(cond_dim, 3*embed_dim)
-        else:
-            if not pbc:
-                self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
+            if pbc:
+                self.v_cond_to_emb_f = nn.Linear(3*cond_dim, 3*embed_dim)
+                self.v_cond_to_emb_r = nn.Linear(3*cond_dim, 3*embed_dim)
+                self.v_mask_to_emb_f = nn.Embedding(3*cond_dim, 3*embed_dim)
+                self.v_mask_to_emb_r = nn.Embedding(3*cond_dim, 3*embed_dim)
             else:
-                self.h_cond_to_emb = nn.Linear(1*embed_dim, embed_dim)
-                # self.v_cond_to_emb = nn.Linear(3*embed_dim, embed_dim)
+                self.v_cond_to_emb_f = nn.Linear(cond_dim, 3*embed_dim)
+                self.v_cond_to_emb_r = nn.Linear(cond_dim, 3*embed_dim)
+                self.v_mask_to_emb_f = nn.Embedding(cond_dim, 3*embed_dim)
+                self.v_mask_to_emb_r = nn.Embedding(cond_dim, 3*embed_dim)
+        else:
+            self.cond_to_emb = nn.Linear(cond_dim, embed_dim)
             self.mask_to_emb = nn.Embedding(cond_dim, embed_dim)
 
         self.abs_time_emb = abs_time_emb
@@ -214,6 +216,10 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         
         self.num_species = num_species
         self.embed_dim = embed_dim
+    
+        if self.pbc and self.tps_condition:
+            print("WARNING:: tps_condition not implemented for when cell of the TS is different from the R or P")
+            print("WARNING:: tps_condition not implemented for when species of the TS is different from the R or P")
         
 
     def _graph_forward(self, species: Tensor, edge_index: Tensor, edge_attr: Tensor, edge_vec: Tensor, t: Tensor, out_cond=None) -> Tuple[Tensor, Tensor]:
@@ -221,14 +227,37 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         if self.abs_time_emb:
             h = h + self.time_embed[:, :, None]
         if self.tps_condition and out_cond is not None:
-            cond_f_x = out_cond["cond_f"]['x']
-            cond_r_x = out_cond["cond_r"]['x']
-            cond_f_mask = out_cond["cond_f"]['mask']
-            cond_r_mask = out_cond["cond_r"]['mask']
-            h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
-            h = h + self.cond_to_emb_r(cond_r_x) + self.mask_to_emb_r(cond_r_mask)
-            v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
-            v = v + self.v_cond_to_emb_r(cond_r_x).reshape(-1,self.embed_dim,3) + self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
+            if self.pbc:
+                with torch.no_grad():
+                    edge_attr_cond_f = torch.hstack([out_cond['cond_f']["distance_vec"], out_cond['cond_f']["distances"].view(-1, 1)])
+                    cond_f, v_cond_f, edge_attr_cond_f = self.encoder(
+                        out_cond['species'].view(-1,self.num_species), 
+                        out_cond['cond_f']['edge_index'], edge_attr_cond_f, out_cond['cond_f']['distance_vec'], 
+                        torch.ones([*out_cond['species'].shape[:-1],1], device=out_cond['species'].device).reshape(-1,1)
+                        )
+                    edge_attr_cond_r = torch.hstack([out_cond['cond_r']["distance_vec"], out_cond['cond_r']["distances"].view(-1, 1)])
+                    cond_r, v_cond_r, edge_attr_cond_r = self.encoder(
+                        out_cond['species'].view(-1,self.num_species), 
+                        out_cond['cond_r']['edge_index'], edge_attr_cond_r, out_cond['cond_r']['distance_vec'], 
+                        torch.ones([*out_cond['species'].shape[:-1],1], device=out_cond['species'].device).reshape(-1,1)
+                        )
+                    cond_f_mask = out_cond["cond_f"]['mask']
+                    cond_r_mask = out_cond["cond_r"]['mask']
+                    v_cond_f = v_cond_f.reshape(-1,self.embed_dim*3)
+                    v_cond_r = v_cond_r.reshape(-1,self.embed_dim*3)
+                    h = h + self.cond_to_emb_f(cond_f) + self.mask_to_emb_f(cond_f_mask)
+                    h = h + self.cond_to_emb_r(cond_r) + self.mask_to_emb_r(cond_r_mask)
+                    v = v + self.v_cond_to_emb_f(v_cond_f).reshape(-1,self.embed_dim,3) +  self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
+                    v = v + self.v_cond_to_emb_r(v_cond_r).reshape(-1,self.embed_dim,3) +  self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
+            else:
+                cond_f_x = out_cond["cond_f"]['x']
+                cond_r_x = out_cond["cond_r"]['x']
+                cond_f_mask = out_cond["cond_f"]['mask']
+                cond_r_mask = out_cond["cond_r"]['mask']
+                h = h + self.cond_to_emb_f(cond_f_x) + self.mask_to_emb_f(cond_f_mask)
+                h = h + self.cond_to_emb_r(cond_r_x) + self.mask_to_emb_r(cond_r_mask)
+                v = v + self.v_cond_to_emb_f(cond_f_x).reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_f(cond_f_mask).reshape(-1,self.embed_dim,3)
+                v = v + self.v_cond_to_emb_r(cond_r_x).reshape(-1,self.embed_dim,3) +   self.v_mask_to_emb_r(cond_r_mask).reshape(-1,self.embed_dim,3)
         else:
             if out_cond is not None:
                 if self.pbc:
@@ -242,7 +271,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
                         edge_index_cond, edge_attr_cond, edge_vec_cond, 
                         torch.zeros([*species_cond.shape[:-1],1], device=species_cond.device).reshape(-1,1)
                         )
-                    h_cond, v_cond = self.processor(h_cond, v_cond, edge_index_cond, edge_attr_cond, edge_len=torch.linalg.norm(edge_vec_cond, dim=1, keepdim=True))
+                    # h_cond, v_cond = self.processor(h_cond, v_cond, edge_index_cond, edge_attr_cond, edge_len=torch.linalg.norm(edge_vec_cond, dim=1, keepdim=True))
                     h = h + self.h_cond_to_emb(h_cond) 
                     # h = h + self.v_cond_to_emb(v_cond.reshape(-1,3*self.embed_dim)) 
                     h = h + self.mask_to_emb(out_cond["mask"].reshape(-1))
@@ -259,6 +288,189 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         #     print(v[i,:10])
         return self.decoder(h, v)
 
+
+    
+    def inference(self, x: Tensor, t: Tensor, 
+                cell=None, 
+                num_atoms=None,
+                conditions=None, 
+                aatype=None, latt_feature=None):
+        B, T, N, _ = x.shape
+        assert t.shape == (B,)
+
+        if self.otf_graph:
+            self.edge_index, self.to_jimages, self.num_bonds = radius_graph_pbc(
+                cart_coords=x.view(-1, 3),
+                lattice=cell.view(-1, 3, 3),
+                num_atoms=num_atoms.view(-1),
+                radius=self.cutoff,
+                max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+                max_cell_images_per_dim=self.max_cell_images_per_dim,
+            )
+            if conditions is not None and self.pbc:
+                if self.tps_condition:
+                    self.edge_index_cond_f, self.to_jimages_cond_f, self.num_bonds_cond_f = radius_graph_pbc(
+                        cart_coords=conditions["cond_f"]['x'].view(-1, 3),
+                        lattice=cell.view(-1, 3, 3),
+                        num_atoms=num_atoms.view(-1),
+                        radius=self.cutoff,
+                        max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+                        max_cell_images_per_dim=self.max_cell_images_per_dim,
+                    )
+                    self.edge_index_cond_r, self.to_jimages_cond_r, self.num_bonds_cond_r = radius_graph_pbc(
+                        cart_coords=conditions["cond_r"]['x'].view(-1, 3),
+                        lattice=cell.view(-1, 3, 3),
+                        num_atoms=num_atoms.view(-1),
+                        radius=self.cutoff,
+                        max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+                        max_cell_images_per_dim=self.max_cell_images_per_dim,
+                    )
+                else:
+                    self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
+                        cart_coords=conditions["x"].view(-1, 3),
+                        lattice=conditions["cell"].view(-1, 3, 3),
+                        num_atoms=conditions["num_atoms"].view(-1),
+                        radius=self.cutoff,
+                        max_num_neighbors_threshold=self.max_num_neighbors_threshold,
+                        max_cell_images_per_dim=self.max_cell_images_per_dim,
+                    )
+            # self.otf_graph = False
+
+        out = get_pbc_distances(
+            x.view(-1, 3),
+            self.edge_index,
+            cell.view(-1, 3, 3),
+            self.to_jimages,
+            num_atoms.view(-1),
+            self.num_bonds,
+            coord_is_cart=True,
+            return_offsets=True,
+            return_distance_vec=True,
+        )
+
+        if conditions is not None:
+            if self.pbc:
+                if self.tps_condition:
+                    out_cond = {}
+                    out_cond['cond_f'] = get_pbc_distances(
+                        conditions["cond_f"]["x"].view(-1, 3),
+                        self.edge_index_cond_f,
+                        cell.view(-1, 3, 3),
+                        self.to_jimages_cond_f,
+                        num_atoms.view(-1),
+                        self.num_bonds_cond_f,
+                        coord_is_cart=True,
+                        return_offsets=True,
+                        return_distance_vec=True,
+                    )
+                    out_cond['cond_r'] = get_pbc_distances(
+                        conditions["cond_r"]["x"].view(-1, 3),
+                        self.edge_index_cond_r,
+                        cell.view(-1, 3, 3),
+                        self.to_jimages_cond_r,
+                        num_atoms.view(-1),
+                        self.num_bonds_cond_r,
+                        coord_is_cart=True,
+                        return_offsets=True,
+                        return_distance_vec=True,
+                    )
+
+                    out_cond["species"] = aatype
+                    out_cond['cond_f']["mask"] = conditions['cond_f']["mask"]
+                    out_cond['cond_r']["mask"] = conditions['cond_r']["mask"]
+                else:
+                    out_cond = get_pbc_distances(
+                        conditions["x"].view(-1, 3),
+                        self.edge_index_cond,
+                        conditions["cell"].view(-1, 3, 3),
+                        self.to_jimages_cond,
+                        conditions["num_atoms"].view(-1),
+                        self.num_bonds_cond,
+                        coord_is_cart=True,
+                        return_offsets=True,
+                        return_distance_vec=True,
+                    )
+                    out_cond["species"] = conditions["species"]
+                    out_cond["mask"] = conditions["mask"]
+            else:
+                out_cond = conditions
+        else:
+            out_cond=None
+        edge_index = out["edge_index"]
+        edge_len = out["distances"]
+        edge_vec = out["distance_vec"]
+        edge_attr = torch.hstack([edge_vec, edge_len.view(-1, 1)])
+
+        t = t.unsqueeze(-1).unsqueeze(1).expand(-1,T,-1).unsqueeze(2).expand(-1,-1,N,-1)
+        if aatype is not None:
+            species = aatype
+        else:
+            aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
+            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species).to(torch.float)
+            
+        scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), out_cond)
+        if self.design:
+            # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
+            return scaler_out.view(B, T, N, -1)
+        elif self.potential_model:
+            return scaler_out.reshape(B, T, N, -1)
+        else:
+            if latt_feature is not None:
+                raise Exception("Lattice flow not implemented")
+
+            return vector_out.reshape(B, T, N, -1)
+        
+    def forward(self, x: Tensor, t: Tensor, 
+                cell=None, 
+                num_atoms=None,
+                conditions=None,
+                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
+        if self.design:
+            x_ = x_latt
+            aatype_ = x
+            if v_mask is not None:
+                x_ = x_*v_mask+x1*(1-v_mask)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
+            return scaler_out*v_mask
+        elif self.potential_model:
+            if v_mask is not None:
+                x = x*v_mask+x1*(1-v_mask)
+            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return scaler_out
+        else:
+            x = x*v_mask+x1*(1-v_mask)
+            if latt_feature is not None:
+                assert not torch.isnan(latt_feature['cell']).any()
+                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
+            else:
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return vector_out*v_mask
+
+    def forward_inference(self, x: Tensor, t: Tensor, 
+                cell=None, 
+                num_atoms=None,
+                conditions=None,
+                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
+        if self.design:
+            x_ = x_latt
+            aatype_ = x
+            if v_mask is not None:
+                x_ = x_*v_mask+x1*(1-v_mask)
+            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
+            return scaler_out*v_mask
+        elif self.potential_model:
+            if v_mask is not None:
+                x = x*v_mask+x1*(1-v_mask)
+            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return scaler_out
+        else:
+            x = x*v_mask+x1*(1-v_mask)
+            if latt_feature is not None:
+                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
+            else:
+                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
+            return vector_out*v_mask
+    
     
     def _get_processed_var(self, x: Tensor, t: Tensor, 
                 cell=None, 
@@ -426,141 +638,7 @@ class EquivariantTransformer_dpm(EquivariantTransformer):
         else:
             vector_out = self._get_processed_var(x, t, cell, num_atoms, conditions, aatype)
             return vector_out
-    
-    def inference(self, x: Tensor, t: Tensor, 
-                cell=None, 
-                num_atoms=None,
-                conditions=None, 
-                aatype=None, latt_feature=None):
-        B, T, N, _ = x.shape
-        assert t.shape == (B,)
 
-        if self.otf_graph:
-            self.edge_index, self.to_jimages, self.num_bonds = radius_graph_pbc(
-                cart_coords=x.view(-1, 3),
-                lattice=cell.view(-1, 3, 3),
-                num_atoms=num_atoms.view(-1),
-                radius=self.cutoff,
-                max_num_neighbors_threshold=self.max_num_neighbors_threshold,
-                max_cell_images_per_dim=self.max_cell_images_per_dim,
-            )
-            if conditions is not None and self.pbc:
-                self.edge_index_cond, self.to_jimages_cond, self.num_bonds_cond = radius_graph_pbc(
-                    cart_coords=conditions["x"].view(-1, 3),
-                    lattice=conditions["cell"].view(-1, 3, 3),
-                    num_atoms=conditions["num_atoms"].view(-1),
-                    radius=self.cutoff,
-                    max_num_neighbors_threshold=self.max_num_neighbors_threshold,
-                    max_cell_images_per_dim=self.max_cell_images_per_dim,
-                )
-            # self.otf_graph = False
-
-        out = get_pbc_distances(
-            x.view(-1, 3),
-            self.edge_index,
-            cell.view(-1, 3, 3),
-            self.to_jimages,
-            num_atoms.view(-1),
-            self.num_bonds,
-            coord_is_cart=True,
-            return_offsets=True,
-            return_distance_vec=True,
-        )
-
-        if conditions is not None:
-            if self.pbc:
-                out_cond = get_pbc_distances(
-                    conditions["x"].view(-1, 3),
-                    self.edge_index_cond,
-                    conditions["cell"].view(-1, 3, 3),
-                    self.to_jimages_cond,
-                    conditions["num_atoms"].view(-1),
-                    self.num_bonds_cond,
-                    coord_is_cart=True,
-                    return_offsets=True,
-                    return_distance_vec=True,
-                )
-                out_cond["species"] = conditions["species"]
-                out_cond["mask"] = conditions["mask"]
-            else:
-                out_cond = conditions
-        else:
-            out_cond=None
-        edge_index = out["edge_index"]
-        edge_len = out["distances"]
-        edge_vec = out["distance_vec"]
-        edge_attr = torch.hstack([edge_vec, edge_len.view(-1, 1)])
-
-        t = t.unsqueeze(-1).unsqueeze(1).expand(-1,T,-1).unsqueeze(2).expand(-1,-1,N,-1)
-        if aatype is not None:
-            species = aatype
-        else:
-            aatype = torch.zeros([B,T,N], dtype=torch.long, device=x.device)
-            species = torch.nn.functional.one_hot(aatype, num_classes=self.num_species).to(torch.float)
-            
-        scaler_out, vector_out = self._graph_forward(species.reshape(-1,self.num_species), edge_index, edge_attr, edge_vec, t.reshape(-1,1), out_cond)
-        if self.design:
-            # return torch.hstack([vector_out, scaler_out]).view(B, T, N, -1)
-            return scaler_out.view(B, T, N, -1)
-        elif self.potential_model:
-            return scaler_out.reshape(B, T, N, -1)
-        else:
-            if latt_feature is not None:
-                raise Exception("Lattice flow not implemented")
-
-            return vector_out.reshape(B, T, N, -1)
-        
-    def forward(self, x: Tensor, t: Tensor, 
-                cell=None, 
-                num_atoms=None,
-                conditions=None,
-                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
-        if self.design:
-            x_ = x_latt
-            aatype_ = x
-            if v_mask is not None:
-                x_ = x_*v_mask+x1*(1-v_mask)
-            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
-            return scaler_out*v_mask
-        elif self.potential_model:
-            if v_mask is not None:
-                x = x*v_mask+x1*(1-v_mask)
-            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return scaler_out
-        else:
-            x = x*v_mask+x1*(1-v_mask)
-            if latt_feature is not None:
-                assert not torch.isnan(latt_feature['cell']).any()
-                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
-            else:
-                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return vector_out*v_mask
-
-    def forward_inference(self, x: Tensor, t: Tensor, 
-                cell=None, 
-                num_atoms=None,
-                conditions=None,
-                aatype=None, x_latt=None, x1=None, v_mask=None, latt_feature=None):
-        if self.design:
-            x_ = x_latt
-            aatype_ = x
-            if v_mask is not None:
-                x_ = x_*v_mask+x1*(1-v_mask)
-            scaler_out = self.inference(x_, t, cell, num_atoms, conditions, aatype_, latt_feature)
-            return scaler_out*v_mask
-        elif self.potential_model:
-            if v_mask is not None:
-                x = x*v_mask+x1*(1-v_mask)
-            scaler_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return scaler_out
-        else:
-            x = x*v_mask+x1*(1-v_mask)
-            if latt_feature is not None:
-                vector_out = self.inference(x, t, latt_feature['cell'], num_atoms, conditions, aatype, latt_feature)
-            else:
-                vector_out = self.inference(x, t, cell, num_atoms, conditions, aatype)
-            return vector_out*v_mask
-    
     def rearrange_batch(self, idx, model_kwargs:dict):
         B = idx.shape[0]
         assert B == model_kwargs['x1'].shape[0]

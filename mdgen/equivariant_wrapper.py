@@ -31,6 +31,10 @@ class EquivariantMDGenWrapper(Wrapper):
             num_scalar_out = self.args.num_species
             num_vector_out=0
             latent_dim = self.args.num_species
+        elif args.pbc:
+            num_scalar_out = 0
+            num_vector_out=1
+            latent_dim = args.embed_dim
         else:
             num_scalar_out = 0
             num_vector_out=1
