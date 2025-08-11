@@ -68,6 +68,28 @@ def divergence(v_func, x, t, model_kwarg):
         div += torch.autograd.grad(v[..., i].sum(), x, create_graph=True)[0][..., i]
     return div 
 
+def batch_ot_match(x0, x1, epsilon=0.05, iters=100):
+    """
+    Return a permutation/index map that matches x0 -> x1 using entropic OT (Sinkhorn).
+    For speed, keep it batch-local and do NOT backprop through the solver.
+    """
+    with torch.no_grad():
+        # cost matrix (squared Euclidean)
+        C = torch.cdist(x0, x1, p=2.0)**2                      # [B, B]
+        # Sinkhorn in log domain (very small, stable implementation)
+        log_K = -C / epsilon
+        u = torch.zeros_like(log_K[:, 0])
+        v = torch.zeros_like(log_K[0, :])
+
+        for _ in range(iters):
+            u = -torch.logsumexp(log_K + v[None, :], dim=1)    # row scaling
+            v = -torch.logsumexp(log_K + u[:, None], dim=0)    # col scaling
+
+        log_P = log_K + u[:, None] + v[None, :]
+        P = torch.exp(log_P)                                   # transport plan
+        # Convert soft plan to hard matching (argmax over columns)
+        idx = P.argmax(dim=1)                                  # [B]
+    return idx
 
 class Transport:
 
@@ -141,8 +163,9 @@ class Transport:
           Args:
             x1 - data point; [batch, *dim]
         """
-
-        x0 = th.randn_like(x1)*self.args.x0std
+        x0 = []
+        for i in range(5):
+            x0.append(th.randn_like(x1)*self.args.x0std)
         t0, t1 = self.check_interval(self.train_eps, self.sample_eps)
         t = th.rand((x1.shape[0],)) * (t1 - t0) + t0
         t = t.to(x1)
@@ -169,6 +192,12 @@ class Transport:
         
         ### normal sampler of t
         t, x0, x1 = self.sample(x1)
+        if self.args.dynOT:
+            assert self.args.x0std > 0 and self.args.weight_loss_var_x0 == 0
+            B,T,L,_ = x1.shape
+            idx = batch_ot_match(x0[0].reshape(B, -1), x1.reshape(B, -1)) 
+            x1 = x1[idx]
+            model.rearrange_batch(idx, model_kwargs)
         if self.args.design:  # alterations made to the original SIT code to include dirichlet flow matching for design
             assert self.model_type == ModelType.VELOCITY
             seq_one_hot = aatype1
@@ -183,7 +212,13 @@ class Transport:
             # model_output = model(xt, t, cell=model_kwargs["cell"], num_atoms=model_kwargs["num_atoms"], x_cond=model_kwargs["x_cond"], x_cond_mask=model_kwargs["x_cond_mask"])
         else:
             if self.score_model is None:
-                t, xt, ut = self.path_sampler.plan(t, x0, x1)
+                t, xt, ut = self.path_sampler.plan(t, x0[0], x1)
+                if self.args.weight_loss_var_x0 > 0:
+                    xt_samples = []
+                    for x0_2 in x0[1:]:
+                        t_2, xt_2, ut_2 = self.path_sampler.plan(t, x0_2, x1)
+                        assert torch.all(t == t_2)
+                        xt_samples.append(xt_2)
             else:
                 t, xt, ut, st = self.path_sampler.plan_schrodinger_bridge(t, x0, x1, 3)
 
@@ -202,6 +237,11 @@ class Transport:
         B = x1.shape[0]
         assert t.shape == (B,)
         model_output = model(xt, t, **model_kwargs)
+        if self.args.weight_loss_var_x0 > 0:
+            model_output_samples = [model_output]
+            for xt_2 in xt_samples:
+                model_output_2 = model(xt_2, t, **model_kwargs)
+                model_output_samples.append(model_output_2)
         if self.score_model is not None:
             score_model_output = self.score_model(xt, t, **model_kwargs)
 
@@ -219,7 +259,24 @@ class Transport:
         terms['x0'] = x0
         if not (self.args.design):
             if self.model_type == ModelType.VELOCITY:
-                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output)*mask)
+                terms["loss_continuous"]=((0.5*(model_output)**2 - (ut)*model_output))
+                if self.args.weight_loss_var_x0 > 0:
+                    ## model_output_samples: list of tensors, each [B, ...] same shape
+                    stacked = torch.stack(model_output_samples, dim=0)  # [K, B, ...]
+                    '''
+                    eps = 1e-8
+                    stacked_n = stacked / (stacked.norm(dim=-1, keepdim=True) + eps)
+                    model_output_mean = stacked_n.mean(0, keepdim=True).detach()
+                    model_output_mean = model_output_mean / (model_output_mean.norm(dim=-1, keepdim=True) + eps)
+                    cos = th.nn.functional.cosine_similarity(stacked_n, model_output_mean, dim=-1)
+                    terms['loss_var'] = (1-cos).mean(dim = 0)
+                    '''
+                    K = stacked.shape[0]
+                    idx_i, idx_j = torch.triu_indices(K, K, offset=1)
+                    stacked_i = stacked[idx_i]
+                    stacked_j = stacked[idx_j]
+                    pair_cos = torch.nn.functional.cosine_similarity(stacked_i, stacked_j, dim=-1)  
+                    terms['loss_var'] = (1-pair_cos).mean(dim = 0)
 
                 # s_est = self.path_sampler.get_score_from_velocity(model_output, xt, t)
                 # div_v = divergence(model, xt, t, model_kwargs).unsqueeze(-1)
@@ -230,7 +287,10 @@ class Transport:
                     terms['loss_score'] = mean_flat((0.5*(score_model_output)**2 - (st)*score_model_output), mask)
                     terms['loss'] = terms['loss_flow']+terms['loss_score']
                 else:
-                    terms['loss'] = terms['loss_flow']
+                    if self.args.weight_loss_var_x0 > 0:
+                        terms['loss'] = terms['loss_flow'] + mean_flat(terms['loss_var'], mask[...,0])*self.args.weight_loss_var_x0
+                    else:
+                        terms['loss'] = terms['loss_flow']
             else:
                 _, drift_var = self.path_sampler.compute_drift(xt, t)
                 sigma_t, _ = self.path_sampler.compute_sigma_t(path.expand_t_like_x(t, xt))

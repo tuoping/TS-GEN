@@ -10,7 +10,7 @@ import numpy as np
 from functools import partial
 
 from .model.equivariant_latent_model import EquivariantTransformer_dpm, Encoder_dpm, Processor, Decoder
-from .wrapper import Wrapper
+from .wrapper import Wrapper, gather_log, get_log_mean
 
 # Typing
 from torch import Tensor
@@ -103,6 +103,19 @@ class EquivariantMDGenWrapper(Wrapper):
                 model=self.model, decay=args.ema_decay
             )
             self.cached_weights = None
+
+    def on_validation_epoch_end(self):
+        if self.args.ema:
+            self.restore_cached_weights()
+        log = self._log
+        log = {key: log[key] for key in log if "val_" in key}
+        log = gather_log(log, self.trainer.world_size)
+        mean_log = get_log_mean(log)
+        self.log("val_loss", mean_log['val_loss'])
+        if self.args.weight_loss_var_x0 > 0:
+            self.log("val_loss_var", mean_log['val_loss_var'])
+        self.log("val_loss_gen", mean_log['val_loss_gen'])
+        self.print_log(prefix='val', save=False)
 
     def prep_batch(self, batch):
         if self.args.design:
@@ -226,12 +239,12 @@ class EquivariantMDGenWrapper(Wrapper):
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
                         'cond_f':{
-                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': cond_mask_f.reshape(-1),
+                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0)[:,0,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
+                            'mask': cond_mask_f[:,0,...].unsqueeze(1).expand(B,T,L).reshape(-1),
                         },
                         'cond_r':{
-                            'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0).reshape(-1,3),
-                            'mask': cond_mask_r.reshape(-1),
+                            'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0)[:,-1,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
+                            'mask': cond_mask_r[:,-1,...].unsqueeze(1).expand(B,T,L).reshape(-1),
                         }
                     }
                 },
@@ -273,6 +286,8 @@ class EquivariantMDGenWrapper(Wrapper):
         self.prefix_log('conditional_batch', prep['conditional_batch'].to(torch.float32))
         loss_gen = out_dict['loss']
         self.prefix_log('loss_gen', loss_gen)
+        if self.args.weight_loss_var_x0 > 0:
+            self.prefix_log('loss_var', out_dict['loss_var'])
         loss = loss_gen
         if self.score_model is not None:
             self.prefix_log("loss_flow", out_dict['loss_flow'])
