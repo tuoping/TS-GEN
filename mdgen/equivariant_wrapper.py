@@ -31,6 +31,10 @@ class EquivariantMDGenWrapper(Wrapper):
             num_scalar_out = self.args.num_species
             num_vector_out=0
             latent_dim = self.args.num_species
+        elif args.pbc:
+            num_scalar_out = 0
+            num_vector_out=1
+            latent_dim = args.embed_dim
         else:
             num_scalar_out = 0
             num_vector_out=1
@@ -115,6 +119,7 @@ class EquivariantMDGenWrapper(Wrapper):
         if self.args.weight_loss_var_x0 > 0:
             self.log("val_loss_var", mean_log['val_loss_var'])
         self.log("val_loss_gen", mean_log['val_loss_gen'])
+        self.log("val_meanRMSD", mean_log['val_meanRMSD'])
         self.print_log(prefix='val', save=False)
 
     def prep_batch(self, batch):
@@ -310,7 +315,18 @@ class EquivariantMDGenWrapper(Wrapper):
             self.prefix_log('name', ','.join(batch['name']))
         self.prefix_log('general_step_dur', time.time() - start1)
         self.last_log_time = time.time()
-        
+        if stage == "val":
+            B,T,L,_ = prep['latents'].shape
+            with torch.no_grad():
+                pred_pos, _ = self.inference(batch, stage=stage)
+                ref_pos = prep['latents']
+                ## (\Delta d per atom) # B,T,L
+                err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
+                ## RMSD per configuration # B,T
+                err = ((err**2).mean(dim=-1)).sqrt()
+                ## mean RMSD per sample # B
+                err = err.mean(dim=-1)
+                self.prefix_log('meanRMSD', err)
         return loss.mean()
 
     def guided_velocity(self, x, t, cell=None, 
