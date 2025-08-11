@@ -80,7 +80,7 @@ def parse_train_args():
     group.add_argument('--x0std', type=float, default=1.0)
     group.add_argument('--dynOT', action='store_true')
     # group.add_argument("--loss-weight", type=none_or_str, default=None, choices=[None, "velocity", "likelihood"])
-    group.add_argument('--weight_loss_var_x0', type=float, default=1)
+    group.add_argument('--weight_loss_var_x0', type=float, default=0)
     
 
     ## video settings
