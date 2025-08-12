@@ -392,7 +392,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 diff = (pred_pos - ref_pos) * mask
                 rmsd_cfg = ((diff.norm(dim=-1)**2).mean(dim=-1)).sqrt()     # [B,T]
                 mean_rmsd = rmsd_cfg.mean(dim=-1)                           # [B]
-                self.prefix_log('meanRMSD_', mean_rmsd)
+                self.prefix_log('meanRMSD', mean_rmsd)
 
                 # --- KABSCH-ALIGNED RMSD + diagnostics ---
                 pred_flat = pred_pos.reshape(B*T, L, 3)
