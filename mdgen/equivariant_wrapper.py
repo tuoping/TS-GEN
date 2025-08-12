@@ -17,6 +17,62 @@ from torch import Tensor
 from typing import List, Optional, Tuple
 from .transport.transport import create_transport, Sampler
 
+def kabsch_align_torch(P, Q, mask=None, allow_reflection=True):
+    """
+    Align P -> Q using Kabsch (optionally allowing reflection).
+    P, Q: [N, L, 3]
+    mask: [N, L] (1 for valid atoms)
+    Returns:
+      P_aligned: [N, L, 3]
+      R:         [N, 3, 3]   (rotation or reflection)
+      t:         [N, 3]      (translation applied)
+      angle_deg: [N]         (rotation angle in degrees)
+      det_R:     [N]         (determinant of R)
+      cent_dist: [N]         (||mu_P - mu_Q|| before alignment)
+    """
+    if mask is None:
+        mask = torch.ones(P.shape[:2], dtype=P.dtype, device=P.device)
+    mask = mask.to(P.dtype)                         # [N,L,1]
+
+    # masked centroids
+    msum = mask.sum(dim=1).clamp_min(1e-8)                         # [N,1,1]
+    muP = (P * mask).sum(dim=1) / msum                 # [N,3]
+    muQ = (Q * mask).sum(dim=1) / msum                 # [N,3]
+    cent_dist = (muP - muQ).norm(dim=-1)                           # [N]
+
+    Pc = P - muP.unsqueeze(1)                                      # [N,L,3]
+    Qc = Q - muQ.unsqueeze(1)
+
+    # weighted covariance
+    H = torch.matmul(Pc.transpose(1, 2) * mask.transpose(1, 2), Qc)  # [N,3,3]
+
+    U, S, Vh = torch.linalg.svd(H)                                  # Vh is V^T
+    R = torch.matmul(Vh.transpose(1, 2), U.transpose(1, 2))          # [N,3,3]
+
+    # fix improper rotation if not allowing reflection
+    detR = torch.det(R)                                             # [N]
+    if not allow_reflection:
+        neg = (detR < 0.0)
+        if neg.any():
+            Vh_fix = Vh.clone()
+            Vh_fix[neg, -1, :] *= -1
+            R = torch.matmul(Vh_fix.transpose(1, 2), U.transpose(1, 2))
+            detR = torch.det(R)
+
+    # rotation angle (numeric safety)
+    trace = R.diagonal(dim1=1, dim2=2).sum(-1)                      # [N]
+    cos_theta = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
+    angle_deg = torch.rad2deg(torch.arccos(cos_theta))              # [N]
+
+    # translation t = mu_Q - R @ mu_P
+    t = muQ - torch.matmul(muP.unsqueeze(1), R).squeeze(1)          # [N,3]
+
+    # apply transform
+    P_aligned = torch.matmul(Pc, R) + muQ.unsqueeze(1)              # [N,L,3]
+    return P_aligned, R, t, angle_deg, detR, cent_dist
+
+
+
 class EquivariantMDGenWrapper(Wrapper):
     def __init__(self, args):
         super().__init__(args)
@@ -316,17 +372,52 @@ class EquivariantMDGenWrapper(Wrapper):
         self.last_log_time = time.time()
         if stage == "val":
             B,T,L,_ = prep['latents'].shape
+            # with torch.no_grad():
+            #     pred_pos, _ = self.inference(batch, stage=stage)
+            #     ref_pos = prep['latents']
+            #     ## (\Delta d per atom) # B,T,L
+            #     err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
+            #     ## RMSD per configuration # B,T
+            #     err = ((err**2).mean(dim=-1)).sqrt()
+            #     ## mean RMSD per sample # B
+            #     err = err.mean(dim=-1)
+            #     self.prefix_log('meanRMSD', err)
+
             with torch.no_grad():
-                pred_pos, _ = self.inference(batch, stage=stage)
-                ref_pos = prep['latents']
-                ## (\Delta d per atom) # B,T,L
-                err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
-                ## RMSD per configuration # B,T
-                err = ((err**2).mean(dim=-1)).sqrt()
-                ## mean RMSD per sample # B
-                err = err.mean(dim=-1)
-                self.prefix_log('meanRMSD', err)
-        return loss.mean()
+                pred_pos, _ = self.inference(batch, stage=stage)            # [B,T,L,3]
+                ref_pos = prep['latents']                                   # [B,T,L,3]
+                mask = (prep['loss_mask'] != 0)                             # [B,T,L]
+
+                # --- RAW RMSD ---
+                diff = (pred_pos - ref_pos) * mask
+                rmsd_cfg = ((diff.norm(dim=-1)**2).mean(dim=-1)).sqrt()     # [B,T]
+                mean_rmsd = rmsd_cfg.mean(dim=-1)                           # [B]
+                self.prefix_log('meanRMSD_', mean_rmsd)
+
+                # --- KABSCH-ALIGNED RMSD + diagnostics ---
+                pred_flat = pred_pos.reshape(B*T, L, 3)
+                ref_flat  = ref_pos.reshape(B*T, L, 3)
+                mask_flat = mask.reshape(B*T, L, 3)
+
+                aligned_pred, R, t, angle_deg, detR, cent_dist = kabsch_align_torch(
+                    pred_flat, ref_flat, mask_flat, allow_reflection=False
+                )
+
+                diff_k = (aligned_pred - ref_flat) * mask_flat
+                rmsd_k_cfg = ((diff_k.norm(dim=-1)**2).mean(dim=-1)).sqrt() # [B*T]
+                rmsd_k = rmsd_k_cfg.view(B, T).mean(dim=-1)                 # [B]
+                self.prefix_log('meanRMSD_kabsch', rmsd_k)
+
+                # rotation angle (deg), translation magnitude, raw centroid distance
+                rot_deg = angle_deg.view(B, T).mean(dim=-1)                 # [B]
+                trans_mag = t.norm(dim=-1).view(B, T).mean(dim=-1)          # [B]
+                cent_dist_b = cent_dist.view(B, T).mean(dim=-1)             # [B]
+
+                self.prefix_log('kabsch_rot_deg', rot_deg)
+                self.prefix_log('kabsch_trans_mag', trans_mag)
+                self.prefix_log('centroid_dist_raw', cent_dist_b)
+
+                return loss.mean()
 
     def guided_velocity(self, x, t, cell=None, 
                 num_atoms=None,
