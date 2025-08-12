@@ -12,65 +12,124 @@ from functools import partial
 from .model.equivariant_latent_model import EquivariantTransformer_dpm, Encoder_dpm, Processor, Decoder
 from .wrapper import Wrapper, gather_log, get_log_mean
 
+
+from pymatgen.core import Molecule
+from pymatgen.analysis.molecule_matcher import BruteForceOrderMatcher, GeneticOrderMatcher, HungarianOrderMatcher, KabschMatcher
+from pymatgen.io.xyz import XYZ
+
 # Typing
 from torch import Tensor
 from typing import List, Optional, Tuple
 from .transport.transport import create_transport, Sampler
 
-def kabsch_align_torch(P, Q, mask=None, allow_reflection=True):
-    """
-    Align P -> Q using Kabsch (optionally allowing reflection).
-    P, Q: [N, L, 3]
-    mask: [N, L] (1 for valid atoms)
-    Returns:
-      P_aligned: [N, L, 3]
-      R:         [N, 3, 3]   (rotation or reflection)
-      t:         [N, 3]      (translation applied)
-      angle_deg: [N]         (rotation angle in degrees)
-      det_R:     [N]         (determinant of R)
-      cent_dist: [N]         (||mu_P - mu_Q|| before alignment)
-    """
-    if mask is None:
-        mask = torch.ones(P.shape[:2], dtype=P.dtype, device=P.device)
-    mask = mask.to(P.dtype)                         # [N,L,1]
+map_to_chemical_symbol = {
+    0: "H",
+    1: 'C',
+    2: "N",
+    3: "O"
 
-    # masked centroids
-    msum = mask.sum(dim=1).clamp_min(1e-8)                         # [N,1,1]
-    muP = (P * mask).sum(dim=1) / msum                 # [N,3]
-    muQ = (Q * mask).sum(dim=1) / msum                 # [N,3]
-    cent_dist = (muP - muQ).norm(dim=-1)                           # [N]
+}
 
-    Pc = P - muP.unsqueeze(1)                                      # [N,L,3]
-    Qc = Q - muQ.unsqueeze(1)
+def xh2pmg(species, xh):
+    mol = Molecule(
+        species=species,
+        coords=xh[:, :3].cpu().numpy(),
+    )
+    return mol
 
-    # weighted covariance
-    H = torch.matmul(Pc.transpose(1, 2) * mask.transpose(1, 2), Qc)  # [N,3,3]
 
-    U, S, Vh = torch.linalg.svd(H)                                  # Vh is V^T
-    R = torch.matmul(Vh.transpose(1, 2), U.transpose(1, 2))          # [N,3,3]
+def xyz2pmg(xyzfile):
+    xyz_converter = XYZ(mol=None)
+    mol = xyz_converter.from_file(xyzfile).molecule
+    return mol
 
-    # fix improper rotation if not allowing reflection
-    detR = torch.det(R)                                             # [N]
-    if not allow_reflection:
-        neg = (detR < 0.0)
-        if neg.any():
-            Vh_fix = Vh.clone()
-            Vh_fix[neg, -1, :] *= -1
-            R = torch.matmul(Vh_fix.transpose(1, 2), U.transpose(1, 2))
-            detR = torch.det(R)
 
-    # rotation angle (numeric safety)
-    trace = R.diagonal(dim1=1, dim2=2).sum(-1)                      # [N]
-    cos_theta = ((trace - 1.0) / 2.0).clamp(-1.0, 1.0)
-    angle_deg = torch.rad2deg(torch.arccos(cos_theta))              # [N]
+def rmsd_core(mol1, mol2, threshold=0.5, same_order=False):
+    _, count = np.unique(mol1.atomic_numbers, return_counts=True)
+    if same_order:
+        bfm = KabschMatcher(mol1)
+        _, rmsd = bfm.fit(mol2)
 
-    # translation t = mu_Q - R @ mu_P
-    t = muQ - torch.matmul(muP.unsqueeze(1), R).squeeze(1)          # [N,3]
+        # Raw-centered RMSD (translation removed, no rotation)
+        A = np.asarray(mol1.cart_coords, dtype=np.float64)
+        B = np.asarray(mol2.cart_coords, dtype=np.float64)
+        A0 = A - A.mean(0, keepdims=True)
+        B0 = B - B.mean(0, keepdims=True)
+        rmsd_raw_centered = float(np.sqrt(((A0 - B0) ** 2).sum(axis=1).mean()))
+        if rmsd_raw_centered < rmsd:
+            print(mol1.species, mol2.species)
+            print(mol1.cart_coords, mol2.cart_coords)
+            raise RuntimeError
 
-    # apply transform
-    P_aligned = torch.matmul(Pc, R) + muQ.unsqueeze(1)              # [N,L,3]
-    return P_aligned, R, t, angle_deg, detR, cent_dist
+        return rmsd
+    total_permutations = 1
+    for c in count:
+        total_permutations *= np.math.factorial(c)  # type: ignore
+    if total_permutations < 1e4:
+        bfm = BruteForceOrderMatcher(mol1)
+        _, rmsd = bfm.fit(mol2)
+    else:
+        bfm = GeneticOrderMatcher(mol1, threshold=threshold)
+        pairs = bfm.fit(mol2)
+        rmsd = threshold
+        for pair in pairs:
+            rmsd = min(rmsd, pair[-1])
+        if not len(pairs):
+            bfm = HungarianOrderMatcher(mol1)
+            _, rmsd = bfm.fit(mol2)
+    return rmsd
 
+
+def pymatgen_rmsd(
+    species, 
+    mol1,
+    mol2,
+    ignore_chirality: bool = False,
+    threshold: float = 0.5,
+    same_order: bool = True,
+):
+    if isinstance(mol1, str):
+        mol1 = xyz2pmg(species, mol1)
+    if isinstance(mol2, str):
+        mol2 = xyz2pmg(species, mol2)
+    rmsd = rmsd_core(mol1, mol2, threshold, same_order=same_order)
+    if ignore_chirality:
+        coords = mol2.cart_coords
+        coords[:, -1] = -coords[:, -1]
+        mol2_reflect = Molecule(
+            species=mol2.species,
+            coords=coords,
+        )
+        rmsd_reflect = rmsd_core(
+            mol1, mol2_reflect, threshold, same_order=same_order)
+        rmsd = min(rmsd, rmsd_reflect)
+    return rmsd
+
+def batch_rmsd_sb(
+    species: List[str],
+    fragments_node: Tensor,
+    pred_xh: Tensor,
+    target_xh: Tensor,
+    threshold: float = 0.5,
+    same_order: bool = True,
+) -> List[float]:
+
+    rmsds = []
+    end_ind = np.cumsum(fragments_node.long().cpu().numpy())
+    start_ind = np.concatenate([np.int64(np.zeros(1)), end_ind[:-1]])
+    for start, end in zip(start_ind, end_ind):
+        mol1 = xh2pmg(species[start:end], pred_xh[start : end])
+        mol2 = xh2pmg(species[start:end], target_xh[start : end])
+        rmsd = pymatgen_rmsd(
+            species[start:end], 
+            mol1,
+            mol2,
+            ignore_chirality=True,
+            threshold=threshold,
+            same_order=same_order,
+        )
+        rmsds.append(min(rmsd, 1.0))
+    return rmsds
 
 
 class EquivariantMDGenWrapper(Wrapper):
@@ -289,6 +348,7 @@ class EquivariantMDGenWrapper(Wrapper):
             return {
                 "species": species,
                 "latents": latents,
+                'x0': latents[:,0,...].unsqueeze(1).expand(B,T,L,3),
                 'E': batch['e_now'],
                 'loss_mask': batch["TKS_v_mask"]*cond_mask.unsqueeze(-1),
                 'loss_mask_potential_model': (batch["TKS_mask"]!=0).to(int)[:,:,0]*cond_mask[:,:,0],
@@ -299,10 +359,6 @@ class EquivariantMDGenWrapper(Wrapper):
                     "cell": batch['cell'],
                     "num_atoms": batch["num_atoms"],
                     "conditions": {
-                        'cond_f':{
-                            'x': torch.where(cond_mask_f.unsqueeze(-1).bool(), latents, 0.0)[:,0,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
-                            'mask': cond_mask_f[:,0,...].unsqueeze(1).expand(B,T,L).reshape(-1),
-                        },
                         'cond_r':{
                             'x': torch.where(cond_mask_r.unsqueeze(-1).bool(), latents, 0.0)[:,-1,...].unsqueeze(1).expand(B,T,L,3).reshape(-1,3),
                             'mask': cond_mask_r[:,-1,...].unsqueeze(1).expand(B,T,L).reshape(-1),
@@ -315,6 +371,7 @@ class EquivariantMDGenWrapper(Wrapper):
             return {
                 "species": species,
                 "latents": latents,
+                'x0': None,
                 'loss_mask': v_loss_mask,
                 'model_kwargs': {
                     "aatype": species,
@@ -338,6 +395,7 @@ class EquivariantMDGenWrapper(Wrapper):
         out_dict = self.transport.training_losses(
             model=self.model,
             x1=prep['latents'],
+            x0=prep['x0'],
             aatype1=batch['species'],
             mask=prep['loss_mask'],
             model_kwargs=prep['model_kwargs']
@@ -373,52 +431,36 @@ class EquivariantMDGenWrapper(Wrapper):
         self.last_log_time = time.time()
         if stage == "val":
             B,T,L,_ = prep['latents'].shape
-            # with torch.no_grad():
-            #     pred_pos, _ = self.inference(batch, stage=stage)
-            #     ref_pos = prep['latents']
-            #     ## (\Delta d per atom) # B,T,L
-            #     err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
-            #     ## RMSD per configuration # B,T
-            #     err = ((err**2).mean(dim=-1)).sqrt()
-            #     ## mean RMSD per sample # B
-            #     err = err.mean(dim=-1)
-            #     self.prefix_log('meanRMSD', err)
+            pred_pos, _ = self.inference(batch, stage=stage)
+            ref_pos = prep['latents']
+            with torch.no_grad():
+                ## (\Delta d per atom) # B,T,L
+                err = ((((pred_pos - ref_pos)*(prep['loss_mask']!=0)).norm(dim=-1)))
+                ## RMSD per configuration # B,T
+                err = ((err**2).mean(dim=-1)).sqrt()
+                ## mean RMSD per sample # B
+                err = err.mean(dim=-1)
+                assert torch.all((prep['loss_mask']!=0)[:,0] == 0)
+                assert torch.all((prep['loss_mask']!=0)[:,-1] == 0)
+                assert torch.all((prep['loss_mask']!=0)[:,1] == 1)
+                assert T == 3
+                self.prefix_log('meanRMSD', err*3)  # An extra factor of 3 was divided when taking the mean over the T dimension
 
             with torch.no_grad():
-                pred_pos, _ = self.inference(batch, stage=stage)            # [B,T,L,3]
-                ref_pos = prep['latents']                                   # [B,T,L,3]
-                mask = (prep['loss_mask'] != 0)                             # [B,T,L]
+                assert torch.all((prep['loss_mask']!=0)[:,0] == 0)
+                assert torch.all((prep['loss_mask']!=0)[:,-1] == 0)
+                assert torch.all((prep['loss_mask']!=0)[:,1] == 1)
+                assert T == 3
+                labels = torch.argmax(prep["species"], dim=-1).ravel().cpu().numpy()  # B,T,L
+                symbols = [map_to_chemical_symbol[labels[i_elem]] for i_elem in range(len(labels))]
+                fragments_node = prep['model_kwargs']['num_atoms'][:,1].ravel() # reshape B,1 to B*1
+                pred_xh = pred_pos[:,1,...].reshape(-1, 3) # reshape B,1,L,3 to B*1*L*3
+                target_xh = ref_pos[:,1,...].reshape(-1, 3) # reshape B,1,L,3 to B*1*L*3
+                rmsds = batch_rmsd_sb(
+                    symbols, fragments_node, pred_xh, target_xh,)
 
-                # --- RAW RMSD ---
-                diff = (pred_pos - ref_pos) * mask
-                rmsd_cfg = ((diff.norm(dim=-1)**2).mean(dim=-1)).sqrt()     # [B,T]
-                mean_rmsd = rmsd_cfg.mean(dim=-1)                           # [B]
-                self.prefix_log('meanRMSD', mean_rmsd)
-
-                # --- KABSCH-ALIGNED RMSD + diagnostics ---
-                pred_flat = pred_pos.reshape(B*T, L, 3)
-                ref_flat  = ref_pos.reshape(B*T, L, 3)
-                mask_flat = mask.reshape(B*T, L, 3)
-
-                aligned_pred, R, t, angle_deg, detR, cent_dist = kabsch_align_torch(
-                    pred_flat, ref_flat, mask_flat, allow_reflection=False
-                )
-
-                diff_k = (aligned_pred - ref_flat) * mask_flat
-                rmsd_k_cfg = ((diff_k.norm(dim=-1)**2).mean(dim=-1)).sqrt() # [B*T]
-                rmsd_k = rmsd_k_cfg.view(B, T).mean(dim=-1)                 # [B]
-                self.prefix_log('meanRMSD_kabsch', rmsd_k)
-
-                # rotation angle (deg), translation magnitude, raw centroid distance
-                rot_deg = angle_deg.view(B, T).mean(dim=-1)                 # [B]
-                trans_mag = t.norm(dim=-1).view(B, T).mean(dim=-1)          # [B]
-                cent_dist_b = cent_dist.view(B, T).mean(dim=-1)             # [B]
-
-                self.prefix_log('kabsch_rot_deg', rot_deg)
-                self.prefix_log('kabsch_trans_mag', trans_mag)
-                self.prefix_log('centroid_dist_raw', cent_dist_b)
-
-                return loss.mean()
+                self.prefix_log('meanRMSD_Kabsch', torch.tensor(rmsds).mean())
+        return loss.mean()
 
     def guided_velocity(self, x, t, cell=None, 
                 num_atoms=None,
@@ -466,7 +508,8 @@ class EquivariantMDGenWrapper(Wrapper):
             vector_out = prep["model_kwargs"]["x_latt"]
             return vector_out, aa_out
         else:
-            zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
+            # zs = torch.randn(B, T, N, D, device=self.device)*self.args.x0std
+            zs = prep['x0']
 
         self.integration_step = 0
         if self.score_model is None:
