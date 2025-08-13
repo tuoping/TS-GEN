@@ -59,7 +59,7 @@ model = EquivariantMDGenWrapper(args)
 
 if args.weight_loss_var_x0 > 0:
     callbacks_fn = [
-        ResetLrCallback(args.lr),
+        # ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=1,
@@ -88,7 +88,7 @@ if args.weight_loss_var_x0 > 0:
     ]
 else:
     callbacks_fn = [
-        ResetLrCallback(args.lr),
+        # ResetLrCallback(args.lr),
         ModelCheckpoint(
             dirpath=os.environ["MODEL_DIR"], 
             save_top_k=1,
