@@ -164,23 +164,21 @@ class Wrapper(pl.LightningModule):
                 del self._log[key]
 
     def configure_optimizers(self):
-        cls = torch.optim.AdamW if self.args.adamW else torch.optim.Adam
-        optimizer = cls(
-            filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
-        )
-        return optimizer
-        '''
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=1,
-            gamma=0.99
-        )
-        return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'monitor': 'val_loss'    # metric to monitor
-            }
-        }
-        '''
+        opt = torch.optim.AdamW(self.parameters(), lr=3e-5)
+
+        # linear warmup to 1e-4 over W epochs, then cosine back to 3e-5
+        W = 0  # warmup epochs
+        T = 200  # cosine length (adjust)
+        base, min_lr = 1e-4, 3e-5
+
+        def lr_lambda(epoch):
+            if epoch < W:
+                return (min_lr + (base - min_lr) * (epoch + 1) / W) / min_lr
+            # cosine from base -> min_lr over next T epochs
+            t = min(max(epoch - W, 0), T)
+            cos = 0.5 * (1 + math.cos(math.pi * t / T)) 
+            return (min_lr + (base - min_lr) * cos) / min_lr
+    
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+        return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "epoch"}}
 
