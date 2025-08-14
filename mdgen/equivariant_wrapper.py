@@ -234,7 +234,7 @@ class EquivariantMDGenWrapper(Wrapper):
         if self.args.weight_loss_var_x0 > 0:
             self.log("val_loss_var", mean_log['val_loss_var'])
         self.log("val_loss_gen", mean_log['val_loss_gen'])
-        self.log("val_meanRMSD", mean_log['val_meanRMSD'])
+        self.log("val_meanRMSD_Kabsch", mean_log['val_meanRMSD_Kabsch'], on_epoch=True)
         self.print_log(prefix='val', save=False)
 
     def prep_batch(self, batch):
@@ -457,7 +457,7 @@ class EquivariantMDGenWrapper(Wrapper):
                 pred_xh = pred_pos[:,1,...].reshape(-1, 3) # reshape B,1,L,3 to B*1*L*3
                 target_xh = ref_pos[:,1,...].reshape(-1, 3) # reshape B,1,L,3 to B*1*L*3
                 rmsds = batch_rmsd_sb(
-                    symbols, fragments_node, pred_xh, target_xh,)
+                    symbols, fragments_node, pred_xh, target_xh, same_order = False)
 
                 self.prefix_log('meanRMSD_Kabsch', torch.tensor(rmsds).mean())
         return loss.mean()

@@ -1,5 +1,6 @@
 from .ema import ExponentialMovingAverage
 from .logger import get_logger
+import math
 
 logger = get_logger(__name__)
 
@@ -10,6 +11,7 @@ import pandas as pd
 from collections import defaultdict
 
 from .tensor_utils import tensor_tree_map
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 def gather_log(log, world_size):
@@ -164,23 +166,48 @@ class Wrapper(pl.LightningModule):
                 del self._log[key]
 
     def configure_optimizers(self):
-        cls = torch.optim.AdamW if self.args.adamW else torch.optim.Adam
-        optimizer = cls(
-            filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
-        )
-        return optimizer
-        '''
-        scheduler = torch.optim.lr_scheduler.StepLR(
-            optimizer,
-            step_size=1,
-            gamma=0.99
-        )
-        return {
-            'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'monitor': 'val_loss'    # metric to monitor
-            }
-        }
-        '''
+        opt = torch.optim.AdamW(self.parameters(), lr=3e-5)
+    
+        # linear warmup to 1e-4 over W epochs, then cosine back to 3e-5
+        W = 0  # warmup epochs
+        T = 400  # cosine length (adjust)
+        # base, min_lr = 1e-4, 3e-5
+        base, min_lr = 3e-5, 1e-6
+    
+        def lr_lambda(epoch):
+            # if epoch < W:
+            #     return (min_lr + (base - min_lr) * (epoch + 1) / W) / min_lr
+            # cosine from base -> min_lr over next T epochs
+            t = min(max(epoch - W, 0), T)
+            cos = 0.5 * (1 + math.cos(math.pi * t / T))
+            return (min_lr + (base - min_lr) * cos) / base
+    
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+        return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "epoch"}}
+
+
+    # def configure_optimizers(self):
+    #     cls = torch.optim.AdamW if self.args.adamW else torch.optim.Adam
+    #     optimizer = cls(
+    #         filter(lambda p: p.requires_grad, self.model.parameters()), lr=self.args.lr,
+    #     )
+    #     # return optimizer
+    #     plateau = ReduceLROnPlateau(
+    #         optimizer,
+    #         mode="min",          # val_meanRMSD smaller is better
+    #         factor=0.5,          # decay LR by 0.5 (try 0.3–0.5)
+    #         patience=150,        # 100–200 is typical for your curve
+    #         threshold=1e-3,      # ~0.1% relative improvement
+    #         threshold_mode="rel",
+    #         cooldown=0,          # or small cooldown like 10
+    #         min_lr=1e-6,         # don't go below this
+    #         verbose=True,
+    #     )
+    #     return {
+    #         'optimizer': optimizer,
+    #         'lr_scheduler': {
+    #             'scheduler': plateau,
+    #             'monitor': 'val_meanRMSD'    # metric to monitor
+    #         }
+    #     }
 
