@@ -38,9 +38,11 @@ def parse_train_args():
     group.add_argument("--grad_clip", type=float, default=1.)
     group.add_argument("--check_grad", action='store_true')
     group.add_argument('--grad_checkpointing', action='store_true')
+    group.add_argument('--adamW', action='store_true')
     group.add_argument('--ema', action='store_true')
     group.add_argument('--ema_decay', type=float, default=0.999)
     group.add_argument("--lr", type=float, default=1e-4)
+    group.add_argument("--lr_decay", action='store_true')
     group.add_argument('--precision', type=str, default='32-true')
     
     ## Training data 

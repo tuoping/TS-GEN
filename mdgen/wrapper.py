@@ -166,24 +166,25 @@ class Wrapper(pl.LightningModule):
                 del self._log[key]
 
     def configure_optimizers(self):
-        opt = torch.optim.AdamW(self.parameters(), lr=3e-5)
-    
-        # linear warmup to 1e-4 over W epochs, then cosine back to 3e-5
-        W = 0  # warmup epochs
-        T = 400  # cosine length (adjust)
-        # base, min_lr = 1e-4, 3e-5
-        base, min_lr = 3e-5, 1e-6
-    
-        def lr_lambda(epoch):
-            # if epoch < W:
-            #     return (min_lr + (base - min_lr) * (epoch + 1) / W) / min_lr
-            # cosine from base -> min_lr over next T epochs
-            t = min(max(epoch - W, 0), T)
-            cos = 0.5 * (1 + math.cos(math.pi * t / T))
-            return (min_lr + (base - min_lr) * cos) / base
-    
-        sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
-        return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "epoch"}}
+        opt = torch.optim.AdamW(self.parameters(), lr=1e-4)
+        if not self.args.lr_decay:
+            return opt
+        else:
+            # linear warmup to 1e-4 over W epochs, then cosine back to 3e-5
+            W = 0  # warmup epochs
+            T = 600  # cosine length (adjust)
+            base, min_lr = 1e-4, 1e-6
+        
+            def lr_lambda(epoch):
+                # if epoch < W:
+                #     return (min_lr + (base - min_lr) * (epoch + 1) / W) / min_lr
+                # cosine from base -> min_lr over next T epochs
+                t = min(max(epoch - W, 0), T)
+                cos = 0.5 * (1 + math.cos(math.pi * t / T))
+                return (min_lr + (base - min_lr) * cos) / base
+        
+            sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda)
+            return {"optimizer": opt, "lr_scheduler": {"scheduler": sched, "interval": "epoch"}}
 
 
     # def configure_optimizers(self):
